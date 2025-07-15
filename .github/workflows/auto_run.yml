@@ -1,0 +1,44 @@
+name: Daily Odoo Report Automation
+
+on:
+  schedule:
+    - cron: '30 6 * * *'  # Runs daily at 12:30 PM Asia/Dhaka
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+
+      - name: Install Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip xvfb libxi6 wget gnupg
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas selenium google-api-python-client google-auth openpyxl chromedriver-autoinstaller
+
+      - name: Create credentials file
+        run: |
+          echo "${{ secrets.GOOGLE_SHEET_CRED_JSON }}" > credentials.json
+
+      - name: Run automation script with headless Chrome
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
+          GOOGLE_SHEET_CRED_JSON: ${{ secrets.GOOGLE_SHEET_CRED_JSON }}
+        run: |
+          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python index.py
