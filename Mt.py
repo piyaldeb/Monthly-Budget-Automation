@@ -21,11 +21,8 @@ ODOO_URL = "https://taps.odoo.com"
 ODOO_USERNAME = "ranak@texzipperbd.com"
 ODOO_PASSWORD = "2326"
 
-# Google service account JSON from GitHub secret
-SERVICE_ACCOUNT_FILE = "service_account.json"
-if "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
-    with open(SERVICE_ACCOUNT_FILE, "w") as f:
-        f.write(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
+# Get service account JSON path from environment (set in GitHub Actions)
+SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
 
 SPREADSHEET_ID = '1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I'
 SHEET_NAME = "Mt"
@@ -121,6 +118,7 @@ def download_from_odoo(company="Metal", date_from="01/01/2025", date_to=None):
 
         print(f"{datetime.now()} Selecting 'Invoice Summary' report...")
         dropdown = wait.until(EC.element_to_be_clickable((By.XPATH, "//select")))
+
         dropdown.click()
         dropdown.send_keys("Invoice Summary")
         dropdown.send_keys(Keys.ENTER)
