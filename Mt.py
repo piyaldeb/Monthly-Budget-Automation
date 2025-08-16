@@ -1,6 +1,7 @@
 import os
 import time
 import glob
+import traceback
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -20,9 +21,11 @@ ODOO_URL = "https://taps.odoo.com"
 ODOO_USERNAME = "ranak@texzipperbd.com"
 ODOO_PASSWORD = "2326"
 
-SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+# Service account: either from env or hardcoded
+SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or r"C:\Users\Ranak\Monthly Budget- Automation\odoo-automation-465010-976566cf6fbb.json"
+
 SPREADSHEET_ID = '1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I'
-SHEET_NAME = "Mt"  # Sheet name
+SHEET_NAME = "Mt"
 PASTE_COLUMNS = 9  # Columns A-I
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -31,19 +34,21 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # Google Sheets Auth
 # -------------------------
 def get_google_sheets_service():
-    print(f"{datetime.now()} ⏳ Authenticating Google Sheets...")
+    if not os.path.exists(SERVICE_ACCOUNT_FILE):
+        raise FileNotFoundError(f"Service account JSON not found: {SERVICE_ACCOUNT_FILE}")
+    print(f"{datetime.now()} Authenticating Google Sheets...")
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
     service = build("sheets", "v4", credentials=creds).spreadsheets().values()
-    print(f"{datetime.now()} ✅ Google Sheets authentication done.")
+    print(f"{datetime.now()} Google Sheets authentication done.")
     return service
 
 # -------------------------
 # Wait for XLSX download
 # -------------------------
 def wait_for_download_complete(download_dir):
-    print(f"{datetime.now()} ⏳ Waiting for XLSX download to complete...")
+    print(f"{datetime.now()} Waiting for XLSX download to complete...")
     initial_files = set(glob.glob(os.path.join(download_dir, "*.xlsx")))
     while True:
         time.sleep(1)
@@ -51,8 +56,8 @@ def wait_for_download_complete(download_dir):
         new_files = current_files - initial_files
         if new_files:
             latest_file = max(new_files, key=os.path.getctime)
-            time.sleep(5)  # ensure fully written
-            print(f"{datetime.now()} ✅ Download completed: {latest_file}")
+            time.sleep(5)
+            print(f"{datetime.now()} Download completed: {latest_file}")
             return latest_file
 
 # -------------------------
@@ -79,18 +84,19 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
 
     chromedriver_autoinstaller.install()
     driver = webdriver.Chrome(options=options)
+    print(f"{datetime.now()} Chrome running headless: {options.headless}")
     wait = WebDriverWait(driver, 30)
 
     try:
-        print(f"{datetime.now()} ⏳ Opening Odoo login page...")
+        print(f"{datetime.now()} Opening Odoo login page...")
         driver.get(ODOO_URL)
         wait.until(EC.presence_of_element_located((By.NAME, "login"))).send_keys(ODOO_USERNAME)
         driver.find_element(By.NAME, "password").send_keys(ODOO_PASSWORD)
         driver.find_element(By.XPATH, "//button[contains(text(), 'Log in')]").click()
-        print(f"{datetime.now()} ✅ Logged into Odoo")
+        print(f"{datetime.now()} Logged into Odoo")
         time.sleep(4)
 
-        print(f"{datetime.now()} ⏳ Switching company to '{company}'...")
+        print(f"{datetime.now()} Switching company to '{company}'...")
         switcher = wait.until(EC.element_to_be_clickable(
             (By.CSS_SELECTOR, "div.o_menu_systray div.o_switch_company_menu > button > span")
         ))
@@ -102,23 +108,23 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
             (By.XPATH, f"//div[contains(@class, 'log_into')][span[contains(text(), '{company}')]]")
         ))
         target_div.click()
-        print(f"{datetime.now()} ✅ Company switched")
+        print(f"{datetime.now()} Company switched")
         time.sleep(4)
 
-        print(f"{datetime.now()} ⏳ Navigating to MRP Reports...")
+        print(f"{datetime.now()} Navigating to MRP Reports...")
         body = driver.find_element(By.TAG_NAME, "body")
         body.send_keys("MRP REPORTS")
         body.send_keys(Keys.ENTER)
         time.sleep(5)
 
-        print(f"{datetime.now()} ⏳ Selecting 'Invoice Summary' report...")
+        print(f"{datetime.now()} Selecting 'Invoice Summary' report...")
         dropdown = wait.until(EC.element_to_be_clickable((By.XPATH, "//select")))
         dropdown.click()
         dropdown.send_keys("Invoice Summary")
         dropdown.send_keys(Keys.ENTER)
         time.sleep(2)
 
-        print(f"{datetime.now()} ⏳ Setting date range: {date_from} to {date_to}...")
+        print(f"{datetime.now()} Setting date range: {date_from} to {date_to}...")
         date_inputs = driver.find_elements(By.XPATH, "//input[contains(@class,'o_datepicker')]")
         if date_inputs:
             date_inputs[0].clear()
@@ -128,7 +134,7 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
             date_inputs[1].send_keys(Keys.ENTER)
         time.sleep(2)
 
-        print(f"{datetime.now()} ⏳ Clicking export button...")
+        print(f"{datetime.now()} Clicking export button...")
         export_btn = wait.until(EC.element_to_be_clickable(
             (By.XPATH, "/html/body/div[2]/div[2]/div/div/div/div/footer/footer/button[1]")
         ))
@@ -136,21 +142,21 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
 
         return wait_for_download_complete(DOWNLOAD_DIR)
 
-    except Exception as e:
-        print(f"{datetime.now()} ❌ Error during Odoo interaction:", e)
+    except Exception:
+        print(f"{datetime.now()} Error during Odoo interaction:\n{traceback.format_exc()}")
     finally:
         driver.quit()
-        print(f"{datetime.now()} ✅ Browser closed")
+        print(f"{datetime.now()} Browser closed")
 
 # -------------------------
 # Update Google Sheet
 # -------------------------
 def update_google_sheet_with_file(file_path, sheet_name):
     try:
-        print(f"{datetime.now()} ⏳ Reading Excel file: {file_path}")
+        print(f"{datetime.now()} Reading Excel file: {file_path}")
         df = pd.read_excel(file_path, engine="openpyxl")
 
-        print(f"{datetime.now()} ⏳ Processing data...")
+        print(f"{datetime.now()} Processing data...")
         for col in df.columns[1:PASTE_COLUMNS]:
             df[col] = pd.to_numeric(df[col], errors="coerce").round(2)
         df = df.where(pd.notnull(df), "")
@@ -158,23 +164,23 @@ def update_google_sheet_with_file(file_path, sheet_name):
         values = [df_to_paste.columns.tolist()] + df_to_paste.values.tolist()
 
         service = get_google_sheets_service()
-        print(f"{datetime.now()} ⏳ Clearing existing data in sheet...")
+        print(f"{datetime.now()} Clearing existing data in sheet...")
         service.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:I").execute()
-        print(f"{datetime.now()} ⏳ Updating Google Sheet with new data...")
+        print(f"{datetime.now()} Updating Google Sheet with new data...")
         service.update(
             spreadsheetId=SPREADSHEET_ID,
             range=f"{sheet_name}!A1",
             valueInputOption="USER_ENTERED",
             body={"values": values}
         ).execute()
-        print(f"{datetime.now()} ✅ Google Sheet '{sheet_name}' updated successfully (A-I).")
+        print(f"{datetime.now()} Google Sheet '{sheet_name}' updated successfully (A-I).")
 
         if os.path.exists(file_path):
             os.remove(file_path)
-            print(f"{datetime.now()} 🗑️ Deleted local file: {file_path}")
+            print(f"{datetime.now()} Deleted local file: {file_path}")
 
-    except Exception as e:
-        print(f"{datetime.now()} ❌ Error updating Google Sheets: {e}")
+    except Exception:
+        print(f"{datetime.now()} Error updating Google Sheets:\n{traceback.format_exc()}")
 
 # -------------------------
 # Main
@@ -183,12 +189,12 @@ def main():
     date_from = "01/01/2025"
     date_to = (datetime.today() - timedelta(days=1)).strftime("%m/%d/%Y")
 
-    print(f"{datetime.now()} ⏳ Starting Odoo download and Google Sheets update process...")
+    print(f"{datetime.now()} Starting Odoo download and Google Sheets update process...")
     downloaded_file = download_from_odoo(company="Metal", date_from=date_from, date_to=date_to)
     if downloaded_file:
         update_google_sheet_with_file(downloaded_file, sheet_name=SHEET_NAME)
     else:
-        print(f"{datetime.now()} ❌ Download failed, nothing to update.")
+        print(f"{datetime.now()} Download failed, nothing to update.")
 
 if __name__ == "__main__":
     main()
