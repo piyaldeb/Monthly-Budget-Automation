@@ -16,13 +16,16 @@ from googleapiclient.discovery import build
 # -------------------------
 # Configuration
 # -------------------------
-DOWNLOAD_DIR = r"C:\Users\Ranak\Documents\Odoo"
+DOWNLOAD_DIR = "downloads"
 ODOO_URL = "https://taps.odoo.com"
 ODOO_USERNAME = "ranak@texzipperbd.com"
 ODOO_PASSWORD = "2326"
 
-# Service account: either from env or hardcoded
-SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or r"C:\Users\Ranak\Monthly Budget- Automation\odoo-automation-465010-976566cf6fbb.json"
+# Google service account JSON from GitHub secret
+SERVICE_ACCOUNT_FILE = "service_account.json"
+if "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
+    with open(SERVICE_ACCOUNT_FILE, "w") as f:
+        f.write(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
 
 SPREADSHEET_ID = '1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I'
 SHEET_NAME = "Mt"
@@ -61,9 +64,9 @@ def wait_for_download_complete(download_dir):
             return latest_file
 
 # -------------------------
-# Selenium: Download Report (Headless)
+# Selenium: Download Report
 # -------------------------
-def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
+def download_from_odoo(company="Metal", date_from="01/01/2025", date_to=None):
     if not date_to:
         date_to = (datetime.today() - timedelta(days=1)).strftime("%m/%d/%Y")
 
@@ -75,7 +78,7 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
     options.add_argument("--headless=new")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("prefs", {
-        "download.default_directory": DOWNLOAD_DIR,
+        "download.default_directory": os.path.abspath(DOWNLOAD_DIR),
         "download.prompt_for_download": False,
         "directory_upgrade": True,
         "safebrowsing.enabled": True
@@ -84,7 +87,6 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
 
     chromedriver_autoinstaller.install()
     driver = webdriver.Chrome(options=options)
-    print(f"{datetime.now()} Chrome running headless: {options.headless}")
     wait = WebDriverWait(driver, 30)
 
     try:
