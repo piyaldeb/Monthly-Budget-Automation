@@ -22,8 +22,8 @@ ODOO_PASSWORD = "2326"
 
 SERVICE_ACCOUNT_FILE = 'odoo-automation-465010-976566cf6fbb.json'
 SPREADSHEET_ID = '1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I'
-SHEET_NAME = "Zip"  # Sheet name
-PASTE_COLUMNS = 25  # Columns A-Y
+SHEET_NAME = "Mt"  # Sheet name
+PASTE_COLUMNS = 9  # Columns A-I
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -48,12 +48,12 @@ def wait_for_download_complete(download_dir):
         new_files = current_files - initial_files
         if new_files:
             latest_file = max(new_files, key=os.path.getctime)
-            time.sleep(10)  # ensure fully written
+            time.sleep(5)  # ensure fully written
             print(f"✅ Download completed: {latest_file}")
             return latest_file
 
 # -------------------------
-# Selenium: Download Report
+# Selenium: Download Report (Headless)
 # -------------------------
 def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
     if not date_to:
@@ -64,6 +64,8 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--headless=new")  # headless mode
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("prefs", {
         "download.default_directory": DOWNLOAD_DIR,
         "download.prompt_for_download": False,
@@ -77,6 +79,7 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
     wait = WebDriverWait(driver, 30)
 
     try:
+        # Login
         driver.get(ODOO_URL)
         wait.until(EC.presence_of_element_located((By.NAME, "login"))).send_keys(ODOO_USERNAME)
         driver.find_element(By.NAME, "password").send_keys(ODOO_PASSWORD)
@@ -141,14 +144,14 @@ def update_google_sheet_with_file(file_path, sheet_name):
     try:
         df = pd.read_excel(file_path, engine="openpyxl")
 
-        # Convert numeric columns to float (B-Y)
+        # Convert numeric columns to float (B-I)
         for col in df.columns[1:PASTE_COLUMNS]:
             df[col] = pd.to_numeric(df[col], errors="coerce").round(2)
 
         # Replace NaN with empty strings
         df = df.where(pd.notnull(df), "")
 
-        # Only paste A-Y
+        # Only paste A-I
         df_to_paste = df.iloc[:, 0:PASTE_COLUMNS]
 
         # Convert to list of lists including headers
@@ -157,7 +160,7 @@ def update_google_sheet_with_file(file_path, sheet_name):
         service = get_google_sheets_service()
 
         # Clear existing range
-        service.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:Y").execute()
+        service.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:I").execute()
 
         # Update with USER_ENTERED to keep numbers formatted
         service.update(
@@ -167,7 +170,7 @@ def update_google_sheet_with_file(file_path, sheet_name):
             body={"values": values}
         ).execute()
 
-        print(f"✅ Google Sheet '{sheet_name}' updated successfully (A:Y).")
+        print(f"✅ Google Sheet '{sheet_name}' updated successfully (A-I).")
 
         # Delete local file
         if os.path.exists(file_path):
@@ -184,7 +187,7 @@ def main():
     date_from = "01/01/2025"
     date_to = (datetime.today() - timedelta(days=1)).strftime("%m/%d/%Y")
 
-    downloaded_file = download_from_odoo(company="Zipper", date_from=date_from, date_to=date_to)
+    downloaded_file = download_from_odoo(company="Metal", date_from=date_from, date_to=date_to)
     if downloaded_file:
         update_google_sheet_with_file(downloaded_file, sheet_name=SHEET_NAME)
     else:

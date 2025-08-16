@@ -48,12 +48,12 @@ def wait_for_download_complete(download_dir):
         new_files = current_files - initial_files
         if new_files:
             latest_file = max(new_files, key=os.path.getctime)
-            time.sleep(10)
+            time.sleep(10)  # ensure fully written
             print(f"✅ Download completed: {latest_file}")
             return latest_file
 
 # -------------------------
-# Selenium: Download Report
+# Selenium: Download Report (Headless)
 # -------------------------
 def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
     if not date_to:
@@ -64,6 +64,8 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--headless=new")  # headless mode
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("prefs", {
         "download.default_directory": DOWNLOAD_DIR,
         "download.prompt_for_download": False,
