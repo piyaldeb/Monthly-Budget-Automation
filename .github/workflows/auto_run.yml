@@ -35,19 +35,16 @@ jobs:
 
       - name: Create Google credentials file
         run: |
-          printf "%s" "${{ secrets.GOOGLE_SHEET_CRED_JSON }}" > credentials.json
-
+          echo '${{ secrets.GOOGLE_SHEET_CRED_JSON }}' > credentials.json
 
       - name: Run MT script
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
-          GOOGLE_SHEET_CRED_JSON: ${{ secrets.GOOGLE_SHEET_CRED_JSON }}
         run: |
           xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Mt.py
 
       - name: Run Zipper script
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
-          GOOGLE_SHEET_CRED_JSON: ${{ secrets.GOOGLE_SHEET_CRED_JSON }}
         run: |
           xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Zip.py
