@@ -2,11 +2,12 @@ name: Daily Odoo Report Automation
 
 on:
   schedule:
-    - cron: '30 6 * * *'  # Runs daily at 12:30 PM Asia/Dhaka
+    # Runs daily at 9:30 AM Asia/Dhaka (UTC+6 → 03:30 UTC)
+    - cron: '30 3 * * *'
   workflow_dispatch:
 
 jobs:
-  run-script:
+  run-odoo-reports:
     runs-on: ubuntu-22.04
 
     steps:
@@ -18,7 +19,7 @@ jobs:
         with:
           python-version: 3.11
 
-      - name: Install Chrome
+      - name: Install Chrome & dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y unzip xvfb libxi6 wget gnupg
@@ -32,13 +33,20 @@ jobs:
           pip install --upgrade pip
           pip install pandas selenium google-api-python-client google-auth openpyxl chromedriver-autoinstaller
 
-      - name: Create credentials file
+      - name: Create Google credentials file
         run: |
           echo "${{ secrets.GOOGLE_SHEET_CRED_JSON }}" > credentials.json
 
-      - name: Run automation script with headless Chrome
+      - name: Run MT script
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
           GOOGLE_SHEET_CRED_JSON: ${{ secrets.GOOGLE_SHEET_CRED_JSON }}
         run: |
-          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python index.py
+          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python mt_script.py
+
+      - name: Run Zipper script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
+          GOOGLE_SHEET_CRED_JSON: ${{ secrets.GOOGLE_SHEET_CRED_JSON }}
+        run: |
+          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python zipper_script.py
