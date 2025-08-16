@@ -15,12 +15,16 @@ from googleapiclient.discovery import build
 # -------------------------
 # Configuration
 # -------------------------
-DOWNLOAD_DIR = r"C:\Users\Ranak\Documents\Odoo"
+# -------------------------
+# Configuration
+# -------------------------
+DOWNLOAD_DIR = "downloads"
 ODOO_URL = "https://taps.odoo.com"
 ODOO_USERNAME = "ranak@texzipperbd.com"
 ODOO_PASSWORD = "2326"
 
-SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+# Get service account JSON path from environment (set in GitHub Actions)
+SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
 SPREADSHEET_ID = '1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I'
 SHEET_NAME = "Zip"  # Sheet name
 PASTE_COLUMNS = 25  # Columns A-Y
