@@ -20,7 +20,7 @@ ODOO_URL = "https://taps.odoo.com"
 ODOO_USERNAME = "ranak@texzipperbd.com"
 ODOO_PASSWORD = "2326"
 
-SERVICE_ACCOUNT_FILE = 'odoo-automation-465010-976566cf6fbb.json'
+SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 SPREADSHEET_ID = '1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I'
 SHEET_NAME = "Zip"  # Sheet name
 PASTE_COLUMNS = 25  # Columns A-Y
