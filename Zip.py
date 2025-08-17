@@ -32,10 +32,15 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # Google Sheets Auth
 # -------------------------
 def get_google_sheets_service():
+    if not os.path.exists(SERVICE_ACCOUNT_FILE):
+        raise FileNotFoundError(f"Service account JSON not found: {SERVICE_ACCOUNT_FILE}")
+    print(f"{datetime.now()} Authenticating Google Sheets...")
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    return build("sheets", "v4", credentials=creds).spreadsheets().values()
+    service = build("sheets", "v4", credentials=creds).spreadsheets().values()
+    print(f"{datetime.now()} Google Sheets authentication done.")
+    return service
 
 # -------------------------
 # Wait for XLSX download
@@ -122,13 +127,12 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
         time.sleep(2)
 
         # Set date range
-        date_inputs = driver.find_elements(By.XPATH, "//input[contains(@class,'o_datepicker')]")
-        if date_inputs:
-            date_inputs[0].clear()
-            date_inputs[0].send_keys(date_from)
-            date_inputs[1].clear()
-            date_inputs[1].send_keys(date_to)
-            date_inputs[1].send_keys(Keys.ENTER)
+        date_input_xpath = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[2]/div[2]/div/div/input"
+
+        date_input = wait.until(EC.presence_of_element_located((By.XPATH, date_input_xpath)))
+        date_input.clear()
+        date_input.send_keys("01/08/25")  # e.g., "01/08/25"
+        date_input.send_keys(Keys.ENTER)
         time.sleep(2)
 
         print(f"{datetime.now()} Clicking export button...")
