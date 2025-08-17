@@ -130,12 +130,12 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
 
     chromedriver_autoinstaller.install()
     options = webdriver.ChromeOptions()
-    # options.add_argument("--no-sandbox")
-    # options.add_argument("--disable-dev-shm-usage")
-    # options.add_argument("--disable-gpu")
-    # options.add_argument("--headless=new")
-    # options.add_argument("--window-size=1920,1080")
-    # options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--headless=new")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("prefs", {
         "download.default_directory": os.path.abspath(run_dir),
         "download.prompt_for_download": False,
