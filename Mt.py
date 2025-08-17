@@ -23,7 +23,6 @@ ODOO_PASSWORD = "2326"
 
 # Get service account JSON path from environment (set in GitHub Actions)
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
-
 SPREADSHEET_ID = '1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I'
 SHEET_NAME = "Mt"
 PASTE_COLUMNS = 9  # Columns A-I
@@ -125,13 +124,12 @@ def download_from_odoo(company="Metal", date_from="01/01/2025", date_to=None):
         time.sleep(2)
 
         print(f"{datetime.now()} Setting date range: {date_from} to {date_to}...")
-        date_inputs = driver.find_elements(By.XPATH, "//input[contains(@class,'o_datepicker')]")
-        if date_inputs:
-            date_inputs[0].clear()
-            date_inputs[0].send_keys(date_from)
-            date_inputs[1].clear()
-            date_inputs[1].send_keys(date_to)
-            date_inputs[1].send_keys(Keys.ENTER)
+        date_input_xpath = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[2]/div[2]/div/div/input"
+
+        date_input = wait.until(EC.presence_of_element_located((By.XPATH, date_input_xpath)))
+        date_input.clear()
+        date_input.send_keys("01/08/25")  # e.g., "01/08/25"
+        date_input.send_keys(Keys.ENTER)
         time.sleep(2)
 
         print(f"{datetime.now()} Clicking export button...")
