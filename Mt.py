@@ -184,8 +184,8 @@ def update_google_sheet_with_file(file_path, sheet_name):
 # Main
 # -------------------------
 def main():
-    date_from = "01/01/2025"
-    date_to = "08/31/2025"
+    date_from = "01/08/2025"
+    date_to = "31/08/2025"
 
     print(f"{datetime.now()} Starting Odoo download and Google Sheets update process...")
     downloaded_file = download_from_odoo(company="Metal", date_from=date_from, date_to=date_to)
