@@ -30,6 +30,13 @@ PASTE_COLUMNS = 9  # Columns A-I
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # -------------------------
+# Locators
+# -------------------------
+DATE_FROM_INPUT_XPATH = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[2]/div[2]/div/div/input"
+DATE_TO_INPUT_XPATH   = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[3]/div[2]/div/div/input"
+EXPORT_BTN_XPATH      = "/html/body/div[2]/div[2]/div/div/div/div/footer/footer/button[1]"
+
+# -------------------------
 # Google Sheets Auth
 # -------------------------
 def get_google_sheets_service():
@@ -60,12 +67,27 @@ def wait_for_download_complete(download_dir):
             return latest_file
 
 # -------------------------
+# Helpers
+# -------------------------
+def _norm_ddmmyy(s: str) -> str:
+    """Accept 'DD/MM/YYYY' or 'DD/MM/YY' and return 'DD/MM/YY'."""
+    s = s.strip()
+    parts = s.split("/")
+    if len(parts) == 3 and len(parts[2]) == 4:
+        return f"{parts[0]}/{parts[1]}/{parts[2][-2:]}"
+    return s
+
+def _allow_headless_downloads(driver, download_dir):
+    # ensure headless Chrome writes to our dir
+    driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+        "behavior": "allow",
+        "downloadPath": os.path.abspath(download_dir)
+    })
+
+# -------------------------
 # Selenium: Download Report
 # -------------------------
-def download_from_odoo(company="Metal", date_from="01/01/2025", date_to=None):
-    if not date_to:
-        date_to = (datetime.today() - timedelta(days=1)).strftime("%m/%d/%Y")
-
+def download_from_odoo(company="Metal", date_from="01/08/2025", date_to="31/08/2025"):
     options = webdriver.ChromeOptions()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -84,6 +106,12 @@ def download_from_odoo(company="Metal", date_from="01/01/2025", date_to=None):
     chromedriver_autoinstaller.install()
     driver = webdriver.Chrome(options=options)
     wait = WebDriverWait(driver, 30)
+
+    # make sure downloads work in headless
+    try:
+        _allow_headless_downloads(driver, DOWNLOAD_DIR)
+    except Exception as e:
+        print(f"{datetime.now()} Could not set headless download behavior (continuing): {e}")
 
     try:
         print(f"{datetime.now()} Opening Odoo login page...")
@@ -117,25 +145,31 @@ def download_from_odoo(company="Metal", date_from="01/01/2025", date_to=None):
 
         print(f"{datetime.now()} Selecting 'Invoice Summary' report...")
         dropdown = wait.until(EC.element_to_be_clickable((By.XPATH, "//select")))
-
         dropdown.click()
         dropdown.send_keys("Invoice Summary")
         dropdown.send_keys(Keys.ENTER)
         time.sleep(2)
 
-        print(f"{datetime.now()} Setting date range: {date_from} to {date_to}...")
-        date_input_xpath = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[2]/div[2]/div/div/input"
+        # ----- Set BOTH dates -----
+        df = _norm_ddmmyy(date_from)  # DD/MM/YY
+        dt = _norm_ddmmyy(date_to)    # DD/MM/YY (fixed 31/08/2025 by default)
 
-        date_input = wait.until(EC.presence_of_element_located((By.XPATH, date_input_xpath)))
-        date_input.clear()
-        date_input.send_keys("01/08/25")  # e.g., "01/08/25"
-        date_input.send_keys(Keys.ENTER)
+        print(f"{datetime.now()} Setting date range: {df} to {dt}...")
+        date_from_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_FROM_INPUT_XPATH)))
+        date_from_input.clear()
+        date_from_input.send_keys(df)
+        date_from_input.send_keys(Keys.ENTER)
+        time.sleep(1)
+
+        date_to_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_TO_INPUT_XPATH)))
+        date_to_input.clear()
+        date_to_input.send_keys(dt)
+        date_to_input.send_keys(Keys.ENTER)
         time.sleep(2)
+        # --------------------------
 
         print(f"{datetime.now()} Clicking export button...")
-        export_btn = wait.until(EC.element_to_be_clickable(
-            (By.XPATH, "/html/body/div[2]/div[2]/div/div/div/div/footer/footer/button[1]")
-        ))
+        export_btn = wait.until(EC.element_to_be_clickable((By.XPATH, EXPORT_BTN_XPATH)))
         driver.execute_script("arguments[0].click();", export_btn)
 
         return wait_for_download_complete(DOWNLOAD_DIR)
@@ -185,7 +219,7 @@ def update_google_sheet_with_file(file_path, sheet_name):
 # -------------------------
 def main():
     date_from = "01/08/2025"
-    date_to = "31/08/2025"
+    date_to   = "31/08/2025"  # fixed end date
 
     print(f"{datetime.now()} Starting Odoo download and Google Sheets update process...")
     downloaded_file = download_from_odoo(company="Metal", date_from=date_from, date_to=date_to)

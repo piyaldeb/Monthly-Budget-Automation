@@ -28,9 +28,10 @@ PASTE_COLUMNS = int(os.environ.get("PASTE_COLUMNS", "25"))
 
 os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
 
-# Keep your exact locators/flow
-DATE_INPUT_XPATH = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[2]/div[2]/div/div/input"
-EXPORT_BTN_XPATH = "/html/body/div[2]/div[2]/div/div/div/div/footer/footer/button[1]"
+# Separate XPaths for Date From and Date To
+DATE_FROM_INPUT_XPATH = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[2]/div[2]/div/div/input"
+DATE_TO_INPUT_XPATH   = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[3]/div[2]/div/div/input"
+EXPORT_BTN_XPATH      = "/html/body/div[2]/div[2]/div/div/div/div/footer/footer/button[1]"
 
 def log(msg: str):
     print(f"{datetime.now()} {msg}", flush=True)
@@ -77,7 +78,6 @@ def wait_for_download_complete(download_dir, start_time, timeout=180, quiet_gap=
     log(f"Waiting for download in {download_dir} (timeout {timeout}s)...")
     end = time.time() + timeout
     last_log = 0
-    seen_sizes = {}
 
     while time.time() < end:
         time.sleep(1)
@@ -118,18 +118,30 @@ def wait_for_download_complete(download_dir, start_time, timeout=180, quiet_gap=
     return None
 
 # -------------------------
+# Small helper: normalize "DD/MM/YYYY" -> "DD/MM/YY"
+# (If already DD/MM/YY, returns as-is)
+# -------------------------
+def _norm_ddmmyy(s: str) -> str:
+    s = s.strip()
+    # Accept "DD/MM/YYYY" or "DD/MM/YY"
+    parts = s.split("/")
+    if len(parts) == 3 and len(parts[2]) == 4:
+        # keep DD and MM as-is, compress YYYY -> YY
+        yy = parts[2][-2:]
+        return f"{parts[0]}/{parts[1]}/{yy}"
+    return s
+
+# -------------------------
 # Selenium: Download Report (UI logic preserved)
 # -------------------------
-def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
-    if not date_to:
-        date_to = (datetime.today() - timedelta(days=1)).strftime("%m/%d/%Y")
-
+def download_from_odoo(company="Zipper", date_from="01/08/2025", date_to="31/08/2025"):
     # Create a unique folder per run to avoid same-name collisions
     run_dir = os.path.join(BASE_DOWNLOAD_DIR, datetime.now().strftime("run_%Y%m%d_%H%M%S"))
     os.makedirs(run_dir, exist_ok=True)
 
     chromedriver_autoinstaller.install()
     options = webdriver.ChromeOptions()
+    # If you want true headless in CI, uncomment these:
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
@@ -193,13 +205,23 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025", date_to=None):
         dropdown.send_keys(Keys.ENTER)
         time.sleep(1)
 
-        # Set date (keep your original)
-        log("Setting date (as in original logic)...")
-        date_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_INPUT_XPATH)))
-        date_input.clear()
-        date_input.send_keys("01/08/25")
-        date_input.send_keys(Keys.ENTER)
+        # ----- Set both dates using your XPaths -----
+        log("Setting date range...")
+        df = _norm_ddmmyy(date_from)  # type DD/MM/YY into Odoo
+        dt = _norm_ddmmyy(date_to)    # type DD/MM/YY into Odoo
+
+        date_from_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_FROM_INPUT_XPATH)))
+        date_from_input.clear()
+        date_from_input.send_keys(df)
+        date_from_input.send_keys(Keys.ENTER)
+        time.sleep(0.5)
+
+        date_to_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_TO_INPUT_XPATH)))
+        date_to_input.clear()
+        date_to_input.send_keys(dt)
+        date_to_input.send_keys(Keys.ENTER)
         time.sleep(1)
+        # -------------------------------------------
 
         # Export (unchanged) — record click time and wait
         log("Clicking export...")
@@ -252,11 +274,12 @@ def update_google_sheet_with_file(file_path, sheet_name):
         os.remove(file_path)
 
 # -------------------------
-# Main (unchanged dates/company)
+# Main (fixed dates/company)
 # -------------------------
 def main():
+    # You can pass DD/MM/YYYY here; the function will type DD/MM/YY into Odoo.
     date_from = "01/08/2025"
-    date_to = "31/08/2025"
+    date_to   = "31/08/2025"  # <-- fixed
     log("Starting Zip run...")
     downloaded_file = download_from_odoo(company="Zipper", date_from=date_from, date_to=date_to)
     if downloaded_file:
