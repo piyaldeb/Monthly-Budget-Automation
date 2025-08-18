@@ -256,7 +256,7 @@ def update_google_sheet_with_file(file_path, sheet_name):
 # -------------------------
 def main():
     date_from = "01/01/2025"
-    date_to = (datetime.today() - timedelta(days=1)).strftime("%m/%d/%Y")
+    date_to = "08/31/2025"
     log("Starting Zip run...")
     downloaded_file = download_from_odoo(company="Zipper", date_from=date_from, date_to=date_to)
     if downloaded_file:
