@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "odoo-automation-465010",
+  "private_key_id": "976566cf6fbb7675c95d4c9a34ea9f45d1ce9846",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCj8GgixA3hGrTF\num/RuMOaZVNpedybX8P36ZO8xdvGJhQza+6x+F4JItm2JFUYgrXozFACr96d4Aqa\nM+m9Sq7KZQxLPpMxz2zxWg8l3vnZB7hc5tcHdy8jMBOjQ83LGw68CKmVcAZUHxtw\nz3SMfkuv6OHy+LX1XzRR9Uq3UOU+ojOAfVWJv/e91SpWjEW3gTahj+PTTVIm/6w/\ncpiiOGkR9cKd/iRbOhTzFKoWRh2eY39Q0rtEC18jDZuof3xM6NE8I3R461vDoFZC\nQnE8A8V8EIgPPgu8HZeXMXMChaSTh4h2kJ51gjM8/GOpmRWN3dgUH3jl5B10Sw9f\nbWNgEV/BAgMBAAECggEAAbK1nsKRcub1ag+RJUbOKTUVJO8LtMT3AS7iBl8K9JBO\nvkJHHIB6QjWiXqtyrDMnvOESOmzll+oLAhI5QL+GHveRUIg15cVZwgg7nESlKYqA\nbjSVPpu37nE1it04GPtPREMCCq0N4Q+EwmmLsgGEOYQRLxSaFzq6DoKawwUAqDeT\n+l+QFVpm2HVTX1hGs7nS4MAHw+txQnS4j/vtvH3LZBSY9rYqi061BLYj35FQ5Jgq\nIr2JC0/lPdWzrPl+GA2247QCwDdzsLB2lvtgZ5y5Fbn1/9n6bJKAqmGCu4zd7cM8\n9mb9UlvVyMVPmgxQM6C+lVUjeNanL2EEZtxcPFBdfwKBgQDTF3gvCnH4wAv2CQMZ\nmffxWSN7/gCQKkcFdpQ2ZbTmZUrp/3Q3727hWePMAlTa8yCDjBfkb+dKsQLKoAVf\nm8Z4Zhuu+Rj2bTzKBs+h3OXgBqFhG1r0HJPZpWqWL0VsgClHNk4gIj3jX0LMUhOs\nnF+wIS63DDtOaStRg6128jGx4wKBgQDG0OaOrSFLqW+DnzBH1S7JPwe1meNpVwxd\nW6I2lXBiemOuE7XjEOBixNBbM9z5SmIyjJm77BxUJ4Uf2NV5cgoLXpWl3IQt2RCq\nS+268tX7KX2WBY6jxCVm38wZdI6KrawLdXOPWk9iDbVtmQvCF0moM+jZPXxMzNLE\nQKfQhQdJCwKBgG2jV/ney/luDghY//IxJTWGncaN088NFlxBDZP/WWj9HV7SHpPa\n2VVUcduJLneWJcINZm9wq8oAjDmfyYqyBvCL4D8OBCgh7pvj0733VLH536HnKmN1\n4Fj/8I9WuBE1s7rX+tX30vsghDpJOwzBH3YElhXe1YLRXv10jgkknCkPAoGATRgS\nXz8JSzKfmFVxPlmPM+BqF+Rdh6qGk+kFhM777mPxJT5laHBR4lrZRJRe2pgabemR\nb4qGDafpekj1tosfE/uQYemZo8GpMbARtk2V5jfXiAYNorlbm4GqvjAxWdswfJ0F\nu4/UenxAXwhaw9+N41iFsT+jZJCEJi/AIx6CjbMCgYAnASIWbUoW21MvIY9xTp7C\n2m6bLDrnOxAmGWo+JLMWCdinEQGJKEDi7mPCVA3zvno8EzMg1VeGNWPle2yVdLbl\nhaemTihTQnituEOyjawMtAOPSDEU/2vtDD+Bvcz7gHWTW/nJRGI6zDtQoVWBJ93N\nhFA7sx+I3BVBADiqihzr6A==\n-----END PRIVATE KEY-----\n",
+  "client_email": "odoo-uploader@odoo-automation-465010.iam.gserviceaccount.com",
+  "client_id": "100454889411104082126",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/odoo-uploader%40odoo-automation-465010.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

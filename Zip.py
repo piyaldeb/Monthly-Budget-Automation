@@ -208,7 +208,7 @@ def download_from_odoo(company="Zipper", date_from="01/08/2025", date_to="31/08/
         # ----- Set both dates using your XPaths -----
         log("Setting date range...")
         df = _norm_ddmmyy(date_from)  # type DD/MM/YY into Odoo
-        dt = _norm_ddmmyy(date_to)    # type DD/MM/YY into Odoo
+        # dt = _norm_ddmmyy(date_to)    # type DD/MM/YY into Odoo
 
         date_from_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_FROM_INPUT_XPATH)))
         date_from_input.clear()
@@ -216,12 +216,12 @@ def download_from_odoo(company="Zipper", date_from="01/08/2025", date_to="31/08/
         date_from_input.send_keys(Keys.ENTER)
         time.sleep(0.5)
 
-        date_to_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_TO_INPUT_XPATH)))
-        date_to_input.clear()
-        date_to_input.send_keys(dt)
-        date_to_input.send_keys(Keys.ENTER)
-        time.sleep(1)
-        # -------------------------------------------
+        # date_to_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_TO_INPUT_XPATH)))
+        # date_to_input.clear()
+        # date_to_input.send_keys(dt)
+        # date_to_input.send_keys(Keys.ENTER)
+        # time.sleep(1)
+        # # -------------------------------------------
 
         # Export (unchanged) — record click time and wait
         log("Clicking export...")
@@ -279,9 +279,9 @@ def update_google_sheet_with_file(file_path, sheet_name):
 def main():
     # You can pass DD/MM/YYYY here; the function will type DD/MM/YY into Odoo.
     date_from = "01/08/2025"
-    date_to   = "31/08/2025"  # <-- fixed
+    # date_to   = "31/08/2025"  # <-- fixed
     log("Starting Zip run...")
-    downloaded_file = download_from_odoo(company="Zipper", date_from=date_from, date_to=date_to)
+    downloaded_file = download_from_odoo(company="Zipper", date_from=date_from)
     if downloaded_file:
         update_google_sheet_with_file(downloaded_file, sheet_name=SHEET_NAME)
         log("Zip sheet updated successfully.")

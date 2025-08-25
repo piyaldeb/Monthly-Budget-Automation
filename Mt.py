@@ -107,7 +107,7 @@ def _norm_ddmmyy(s: str) -> str:
 # -------------------------
 # Selenium: Download Report
 # -------------------------
-def download_from_odoo(company="Metal", date_from="01/08/2025", date_to="31/08/2025"):
+def download_from_odoo(company="Metal", date_from="01/08/2025"):
     run_dir = os.path.join(BASE_DOWNLOAD_DIR, datetime.now().strftime("run_%Y%m%d_%H%M%S"))
     os.makedirs(run_dir, exist_ok=True)
 
@@ -167,12 +167,12 @@ def download_from_odoo(company="Metal", date_from="01/08/2025", date_to="31/08/2
 
         log("Setting date range...")
         df = _norm_ddmmyy(date_from)
-        dt = _norm_ddmmyy(date_to)
+        # dt = _norm_ddmmyy(date_to)
         date_from_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_FROM_INPUT_XPATH)))
         date_from_input.clear(); date_from_input.send_keys(df); date_from_input.send_keys(Keys.ENTER)
         time.sleep(0.5)
         date_to_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_TO_INPUT_XPATH)))
-        date_to_input.clear(); date_to_input.send_keys(dt); date_to_input.send_keys(Keys.ENTER)
+        # date_to_input.clear(); date_to_input.send_keys(dt); date_to_input.send_keys(Keys.ENTER)
         time.sleep(1)
 
         log("Clicking export...")
@@ -216,9 +216,9 @@ def update_google_sheet_with_file(file_path, sheet_name):
 # -------------------------
 def main():
     date_from = "01/08/2025"
-    date_to   = "31/08/2025"
+    # date_to   = "31/08/2025"
     log("Starting Metal run...")
-    downloaded_file = download_from_odoo(company="Metal", date_from=date_from, date_to=date_to)
+    downloaded_file = download_from_odoo(company="Metal", date_from=date_from)
     if downloaded_file:
         update_google_sheet_with_file(downloaded_file, sheet_name=SHEET_NAME)
         log("Metal sheet updated successfully.")
