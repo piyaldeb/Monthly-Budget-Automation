@@ -28,10 +28,18 @@ PASTE_COLUMNS = int(os.environ.get("PASTE_COLUMNS", "25"))
 
 os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
 
-# Separate XPaths for Date From and Date To
+# Separate XPaths for Date From and Export button (Date To is NOT used)
 DATE_FROM_INPUT_XPATH = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[2]/div[2]/div/div/input"
-DATE_TO_INPUT_XPATH   = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[3]/div[2]/div/div/input"
-EXPORT_BTN_XPATH      = "/html/body/div[2]/div[2]/div/div/div/div/footer/footer/button[1]"
+
+# Footer scope where we will search for the "Download Excel" button
+FOOTER_BASE_XPATH = "/html/body/div[2]/div[2]/div/div/div/div/footer"
+
+EXPORT_BTN_XPATH = (
+    FOOTER_BASE_XPATH
+    + "//button[normalize-space(text())='Download Excel' "
+      "or normalize-space(span/text())='Download Excel' "
+      "or contains(normalize-space(.), 'Download Excel')]"
+)
 
 def log(msg: str):
     print(f"{datetime.now()} {msg}", flush=True)
@@ -48,7 +56,7 @@ def get_google_sheets_service():
     return build("sheets", "v4", credentials=creds).spreadsheets().values()
 
 # -------------------------
-# Download helpers (CI only)
+# Download helpers
 # -------------------------
 def _list_files(d, patterns=("*.xlsx","*.xls","*.crdownload")):
     files = []
@@ -63,18 +71,12 @@ def _human_size(path):
         return "?"
 
 def allow_headless_downloads(driver, download_dir):
-    # point headless Chrome to our unique run folder
     driver.execute_cdp_cmd("Page.setDownloadBehavior", {
         "behavior": "allow",
         "downloadPath": os.path.abspath(download_dir)
     })
 
 def wait_for_download_complete(download_dir, start_time, timeout=180, quiet_gap=2):
-    """
-    Wait for a new or updated .xlsx/.xls in a *fresh* run folder.
-    Accept file if ctime/mtime >= export click time.
-    Show size growth logs for visibility in CI.
-    """
     log(f"Waiting for download in {download_dir} (timeout {timeout}s)...")
     end = time.time() + timeout
     last_log = 0
@@ -82,7 +84,6 @@ def wait_for_download_complete(download_dir, start_time, timeout=180, quiet_gap=
     while time.time() < end:
         time.sleep(1)
         finished = _list_files(download_dir, ("*.xlsx","*.xls"))
-        # Accept any finished file with mtime >= click time
         for f in finished:
             try:
                 mt = os.path.getmtime(f)
@@ -90,69 +91,79 @@ def wait_for_download_complete(download_dir, start_time, timeout=180, quiet_gap=
             except FileNotFoundError:
                 continue
             if mt >= start_time or ct >= start_time:
-                time.sleep(quiet_gap)  # flush
+                time.sleep(quiet_gap)
                 log(f"Download completed: {os.path.basename(f)} ({_human_size(f)})")
                 return f
-
-        # heartbeat + size growth for .crdownload
-        temps = _list_files(download_dir, ("*.crdownload",))
-        if temps:
-            # log every ~10s
-            if time.time() - last_log > 10:
-                parts = []
-                for t in temps:
-                    sz = _human_size(t)
-                    parts.append(f"{os.path.basename(t)} [{sz}]")
-                log("Still downloading... temp: " + ", ".join(parts))
-                last_log = time.time()
-        else:
-            if time.time() - last_log > 10:
-                contents = [os.path.basename(x)+"["+_human_size(x)+"]" for x in _list_files(download_dir)]
-                if contents:
-                    log("Downloads dir status: " + ", ".join(contents))
-                else:
-                    log("Downloads dir is empty; waiting for export to start.")
-                last_log = time.time()
-
+        # heartbeat logging
+        if time.time() - last_log > 10:
+            temps = _list_files(download_dir)
+            contents = [os.path.basename(x)+"["+_human_size(x)+"]" for x in temps]
+            if contents:
+                log("Downloads dir status: " + ", ".join(contents))
+            else:
+                log("Downloads dir empty; waiting for export.")
+            last_log = time.time()
     log("Download timed out.")
     return None
 
-# -------------------------
-# Small helper: normalize "DD/MM/YYYY" -> "DD/MM/YY"
-# (If already DD/MM/YY, returns as-is)
-# -------------------------
 def _norm_ddmmyy(s: str) -> str:
     s = s.strip()
-    # Accept "DD/MM/YYYY" or "DD/MM/YY"
     parts = s.split("/")
     if len(parts) == 3 and len(parts[2]) == 4:
-        # keep DD and MM as-is, compress YYYY -> YY
-        yy = parts[2][-2:]
-        return f"{parts[0]}/{parts[1]}/{yy}"
+        return f"{parts[0]}/{parts[1]}/{parts[2][-2:]}"
     return s
 
 # -------------------------
-# Selenium: Download Report (UI logic preserved)
+# Resilient interaction helpers
 # -------------------------
-def download_from_odoo(company="Zipper", date_from="01/08/2025", date_to="31/08/2025"):
-    # Create a unique folder per run to avoid same-name collisions
+def safe_click(driver, wait, xpath, tries=3, sleep=0.8):
+    for i in range(1, tries+1):
+        el = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+        try:
+            wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
+            el.click()
+            return True
+        except Exception:
+            try:
+                driver.execute_script("arguments[0].click();", el)
+                return True
+            except Exception:
+                time.sleep(sleep)
+    raise RuntimeError(f"Failed to click {xpath}")
+
+def type_xpath(driver, wait, xpath, text, press_enter=True):
+    el = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+    el.click()
+    el.send_keys(Keys.CONTROL, "a")
+    el.send_keys(Keys.BACKSPACE)
+    el.send_keys(text)
+    if press_enter:
+        el.send_keys(Keys.ENTER)
+    return el
+
+# -------------------------
+# Selenium: Download Report
+# -------------------------
+def download_from_odoo(company="Zipper", date_from="01/08/2025"):
     run_dir = os.path.join(BASE_DOWNLOAD_DIR, datetime.now().strftime("run_%Y%m%d_%H%M%S"))
     os.makedirs(run_dir, exist_ok=True)
 
     chromedriver_autoinstaller.install()
     options = webdriver.ChromeOptions()
-    # If you want true headless in CI, uncomment these:
+    options.add_argument("--headless=new")
+    options.add_argument("--window-size=1920,1080")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--headless=new")
-    options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("prefs", {
         "download.default_directory": os.path.abspath(run_dir),
         "download.prompt_for_download": False,
         "directory_upgrade": True,
-        "safebrowsing.enabled": True
+        "safebrowsing.enabled": True,
+        "profile.default_content_settings.popups": 0,
     })
     options.add_argument("--log-level=3")
 
@@ -161,7 +172,6 @@ def download_from_odoo(company="Zipper", date_from="01/08/2025", date_to="31/08/
     driver.set_script_timeout(60)
     wait = WebDriverWait(driver, 40)
 
-    # Make sure headless actually writes to our run_dir
     try:
         allow_headless_downloads(driver, run_dir)
         log("Headless downloads enabled via CDP.")
@@ -176,28 +186,26 @@ def download_from_odoo(company="Zipper", date_from="01/08/2025", date_to="31/08/
         driver.find_element(By.XPATH, "//button[contains(text(), 'Log in')]").click()
         time.sleep(2)
 
-        # Switch company (same selectors)
         log(f"Switching company to '{company}'...")
         switcher = wait.until(EC.element_to_be_clickable(
             (By.CSS_SELECTOR, "div.o_menu_systray div.o_switch_company_menu > button > span")
         ))
-        driver.execute_script("arguments[0].scrollIntoView(true);", switcher)
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", switcher)
         switcher.click()
         time.sleep(1)
         target_div = wait.until(EC.element_to_be_clickable(
             (By.XPATH, f"//div[contains(@class, 'log_into')][span[contains(text(), '{company}')]]")
         ))
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target_div)
         target_div.click()
         time.sleep(2)
 
-        # Navigate to MRP Reports (unchanged)
         log("Navigating to MRP REPORTS...")
         body = driver.find_element(By.TAG_NAME, "body")
         body.send_keys("MRP REPORTS")
         body.send_keys(Keys.ENTER)
         time.sleep(2)
 
-        # Select "Invoice Summary" (unchanged)
         log("Selecting 'Invoice Summary'...")
         dropdown = wait.until(EC.element_to_be_clickable((By.XPATH, "//select")))
         dropdown.click()
@@ -205,32 +213,37 @@ def download_from_odoo(company="Zipper", date_from="01/08/2025", date_to="31/08/
         dropdown.send_keys(Keys.ENTER)
         time.sleep(1)
 
-        # ----- Set both dates using your XPaths -----
-        log("Setting date range...")
-        df = _norm_ddmmyy(date_from)  # type DD/MM/YY into Odoo
-        # dt = _norm_ddmmyy(date_to)    # type DD/MM/YY into Odoo
-
+        log("Setting From date...")
+        df = _norm_ddmmyy(date_from)
         date_from_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_FROM_INPUT_XPATH)))
-        date_from_input.clear()
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", date_from_input)
+        date_from_input.click()
+        date_from_input.send_keys(Keys.CONTROL, "a")
+        date_from_input.send_keys(Keys.BACKSPACE)
         date_from_input.send_keys(df)
         date_from_input.send_keys(Keys.ENTER)
         time.sleep(0.5)
 
-        # date_to_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_TO_INPUT_XPATH)))
-        # date_to_input.clear()
-        # date_to_input.send_keys(dt)
-        # date_to_input.send_keys(Keys.ENTER)
-        # time.sleep(1)
-        # # -------------------------------------------
+        log("Clicking Download Excel...")
+        footer_el = wait.until(EC.presence_of_element_located((By.XPATH, FOOTER_BASE_XPATH)))
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", footer_el)
 
-        # Export (unchanged) — record click time and wait
-        log("Clicking export...")
-        export_btn = wait.until(EC.element_to_be_clickable((By.XPATH, EXPORT_BTN_XPATH)))
+        export_btn = wait.until(EC.presence_of_element_located((By.XPATH, EXPORT_BTN_XPATH)))
 
-        for i in range(1, 4):  # up to 3 tries
+        for _ in range(10):
+            if not export_btn.get_attribute("disabled"):
+                break
+            time.sleep(0.2)
+
+        for i in range(1, 4):
             click_time = time.time()
-            driver.execute_script("arguments[0].click();", export_btn)
-            log(f"Export click attempt {i}/3...")
+            try:
+                wait.until(EC.element_to_be_clickable((By.XPATH, EXPORT_BTN_XPATH)))
+                export_btn.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", export_btn)
+
+            log(f"Download Excel click attempt {i}/3...")
             f = wait_for_download_complete(run_dir, start_time=click_time, timeout=60 if i < 3 else 180)
             if f:
                 return f
@@ -240,7 +253,6 @@ def download_from_odoo(company="Zipper", date_from="01/08/2025", date_to="31/08/
 
     except Exception:
         log(f"Error during Odoo interaction:\n{traceback.format_exc()}")
-        # Optional: dump artifacts for debugging
         try:
             driver.save_screenshot(os.path.join(run_dir, "zip_error.png"))
             with open(os.path.join(run_dir, "zip_error.html"), "w", encoding="utf-8") as fp:
@@ -274,12 +286,10 @@ def update_google_sheet_with_file(file_path, sheet_name):
         os.remove(file_path)
 
 # -------------------------
-# Main (fixed dates/company)
+# Main (fixed date/company)
 # -------------------------
 def main():
-    # You can pass DD/MM/YYYY here; the function will type DD/MM/YY into Odoo.
     date_from = "01/08/2025"
-    # date_to   = "31/08/2025"  # <-- fixed
     log("Starting Zip run...")
     downloaded_file = download_from_odoo(company="Zipper", date_from=date_from)
     if downloaded_file:
