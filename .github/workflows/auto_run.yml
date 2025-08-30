@@ -48,3 +48,14 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
         run: |
           xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Zip.py
+      - name: Run Zip_dash script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
+        run: |
+          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Zip_dash.py
+
+      - name: Run Mt_dash script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
+        run: |
+          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Mt_dash.py
