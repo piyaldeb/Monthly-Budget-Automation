@@ -2,9 +2,41 @@ name: Daily Odoo Report Automation
 
 on:
   schedule:
-    # Runs every 30 minutes from 9:00 AM to 12:00 PM Asia/Dhaka (UTC+6 → 03:00–06:00 UTC)
-    - cron: '0,30 3-6 * * *'
+    # Asia/Dhaka = UTC+6. 09:00–12:00 local → 03:00–06:00 UTC
+    # Every 30 minutes within that window, but NOT 06:30.
+    - cron: '0,30 3-5 * * *'  # 03:00, 03:30, 04:00, 04:30, 05:00, 05:30 UTC
+    - cron: '0 6 * * *'       # 06:00 UTC (12:00 local)
   workflow_dispatch:
+    inputs:
+      run_mt:
+        description: 'Run Mt.py'
+        type: boolean
+        default: false
+        required: false
+      run_zip:
+        description: 'Run Zip.py'
+        type: boolean
+        default: false
+        required: false
+      run_zip_dash:
+        description: 'Run Zip_dash.py'
+        type: boolean
+        default: false
+        required: false
+      run_mt_dash:
+        description: 'Run Mt_dash.py'
+        type: boolean
+        default: false
+        required: false
+      run_all:
+        description: 'Run ALL scripts (overrides individual toggles)'
+        type: boolean
+        default: true
+        required: false
+
+concurrency:
+  group: daily-odoo-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   run-odoo-reports:
@@ -12,49 +44,59 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: 3.11
+          python-version: '3.11'
 
       - name: Install Chrome & dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y unzip xvfb libxi6 wget gnupg
-          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-linux-signing-key.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-key.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
 
       - name: Install Python dependencies
         run: |
-          pip install --upgrade pip
-          pip install pandas selenium google-api-python-client google-auth openpyxl chromedriver-autoinstaller
+          python -m pip install --upgrade pip
+          pip install \
+            pandas numpy \
+            gspread gspread-dataframe google-auth google-auth-httplib2 google-api-python-client \
+            selenium chromedriver-autoinstaller \
+            openpyxl
 
       - name: Create Google credentials file
         run: |
-          echo '${{ secrets.GOOGLE_SHEET_CRED_JSON }}' > credentials.json
+          printf '%s' '${{ secrets.GOOGLE_SHEET_CRED_JSON }}' > "$GITHUB_WORKSPACE/credentials.json"
 
+      # ---------- RUNNERS (conditional) ----------
       - name: Run MT script
+        if: ${{ github.event_name != 'workflow_dispatch' && true || inputs.run_all == true || inputs.run_mt == true }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
         run: |
           xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Mt.py
 
       - name: Run Zipper script
+        if: ${{ github.event_name != 'workflow_dispatch' && true || inputs.run_all == true || inputs.run_zip == true }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
         run: |
           xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Zip.py
+
       - name: Run Zip_dash script
+        if: ${{ github.event_name != 'workflow_dispatch' && true || inputs.run_all == true || inputs.run_zip_dash == true }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
         run: |
           xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Zip_dash.py
 
       - name: Run Mt_dash script
+        if: ${{ github.event_name != 'workflow_dispatch' && true || inputs.run_all == true || inputs.run_mt_dash == true }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
         run: |
