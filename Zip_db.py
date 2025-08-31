@@ -35,8 +35,8 @@ DATE_TO   = os.environ.get("DATE_TO",   datetime.now().strftime("%Y-%m-%d"))
 # Google Sheets
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
 SPREADSHEET_ID       = os.environ.get("SPREADSHEET_ID", "1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I")
-SHEET_NAME           = os.environ.get("SHEET_NAME", "Mt")
-PASTE_COLUMNS        = int(os.environ.get("PASTE_COLUMNS", "9"))  # A:I for 9 columns
+SHEET_NAME           = os.environ.get("SHEET_NAME", "Zip")
+PASTE_COLUMNS        = int(os.environ.get("PASTE_COLUMNS", "25"))  # A:I for 9 columns
 
 # ===============================
 # Utilities
