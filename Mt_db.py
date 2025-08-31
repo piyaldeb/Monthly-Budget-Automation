@@ -1,110 +1,123 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
-import requests
-import json
 import re
-import datetime
+import json
+import time
+import glob
+import traceback
+from datetime import datetime
+
+import requests
 import pandas as pd
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# ========= CONFIG ==========
-ODOO_URL = "https://taps.odoo.com"
-DB = "masbha-tex-taps-master-2093561"
-USERNAME = "ranak@texzipperbd.com"
-PASSWORD = "2326"
-
-MODEL = "mrp.report.custom"   # Wizard model
-REPORT_BUTTON_METHOD = "action_generate_xlsx_report"
-
-REPORT_TYPE = "s_invs"
-DATE_FROM = "2025-08-01"
-DATE_TO = datetime.date.today().strftime("%Y-%m-%d")
-
-BASE_DOWNLOAD_DIR = os.path.join(os.getcwd(), "odoo_reports")
+# -------------------------
+# Config (env-first)
+# -------------------------
+BASE_DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "downloads")
 os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
 
-# Google Sheets config
+# Odoo
+ODOO_URL      = os.environ.get("ODOO_URL", "https://taps.odoo.com").rstrip("/")
+ODOO_DB       = os.environ.get("ODOO_DB", "taps")           # <- set your DB name
+ODOO_USERNAME = os.environ.get("ODOO_USERNAME", "ranak@texzipperbd.com")
+ODOO_PASSWORD = os.environ.get("ODOO_PASSWORD", "2326")
+COMPANY_ID    = int(os.environ.get("ODOO_COMPANY_ID", "3"))  # allowed_company_ids, options.company_id
+
+# Report flow (model + button + report type)
+MODEL                = os.environ.get("ODOO_WIZARD_MODEL", "taps_manufacturing.pi.wizard")
+REPORT_TYPE          = os.environ.get("ODOO_REPORT_TYPE", "pi_xls")
+REPORT_BUTTON_METHOD = os.environ.get("ODOO_REPORT_BUTTON", "print_xlsx")
+REPORT_TEMPLATE_FALLBACK = os.environ.get("ODOO_REPORT_TEMPLATE", "taps_manufacturing.pi_xls_template")
+
+# Date window (DD/MM/YYYY)
+DATE_FROM = os.environ.get("DATE_FROM", "01/08/2025")
+DATE_TO   = os.environ.get("DATE_TO",   "31/08/2025")
+
+# Google Sheets
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I")
-SHEET_NAME = os.environ.get("SHEET_NAME", "Zip")
-PASTE_COLUMNS = int(os.environ.get("PASTE_COLUMNS", "25"))
+SHEET_NAME     = os.environ.get("SHEET_NAME", "Mt")
+PASTE_COLUMNS  = int(os.environ.get("PASTE_COLUMNS", "9"))  # Metal only needs 9 cols
 
 # -------------------------
-# GOOGLE SHEETS SERVICE (fixed)
+# Utility
+# -------------------------
+def log(msg: str):
+    print(f"{datetime.now()} {msg}", flush=True)
+
+def _list_files(d, patterns=("*.xlsx","*.xls")):
+    files = []
+    for p in patterns:
+        files.extend(glob.glob(os.path.join(d, p)))
+    return sorted(files, key=os.path.getmtime)
+
+# -------------------------
+# Google Sheets helpers
 # -------------------------
 def get_google_sheets_service():
+    if not os.path.exists(SERVICE_ACCOUNT_FILE):
+        raise FileNotFoundError(f"Service account JSON not found: {SERVICE_ACCOUNT_FILE}")
     creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        SERVICE_ACCOUNT_FILE, scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    service = build("sheets", "v4", credentials=creds)
-    return service.spreadsheets()  # return the spreadsheets resource
+    return build("sheets", "v4", credentials=creds).spreadsheets().values()
 
 # -------------------------
-# Update Google Sheet (fixed)
+# Download Odoo Report (HTTP API flow)
 # -------------------------
-def update_google_sheet_with_file(file_path, sheet_name):
-    df = pd.read_excel(file_path, engine="openpyxl")
-    
-    # Round numeric columns
-    for col in df.columns[1:PASTE_COLUMNS]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").round(2)
-    df = df.where(pd.notnull(df), "")
-    
-    df_to_paste = df.iloc[:, 0:PASTE_COLUMNS]
-    values = [df_to_paste.columns.tolist()] + df_to_paste.values.tolist()
-
-    service = get_google_sheets_service()
-
-    # Clear existing content first
-    service.values().clear(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{sheet_name}!A1:Z1000"
-    ).execute()
-
-    # Paste new values
-    service.values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{sheet_name}!A1",
-        valueInputOption="USER_ENTERED",
-        body={"values": values}
-    ).execute()
-
-    # Delete local file
-    if os.path.exists(file_path):
-        os.remove(file_path)
-
-
-# -------------------------
-# Download Odoo Report
-# -------------------------
-def download_from_odoo():
+def download_from_odoo() -> str | None:
+    """
+    Logs into Odoo, configures the report wizard and downloads an XLSX.
+    Returns local filename or None.
+    """
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0"})
 
-    # Step 1: Login
+    # -- Step 1: login
     login_url = f"{ODOO_URL}/web/session/authenticate"
-    login_payload = {"jsonrpc": "2.0", "params": {"db": DB, "login": USERNAME, "password": PASSWORD}}
-    resp = session.post(login_url, json=login_payload)
-    uid = resp.json().get("result", {}).get("uid")
-    
-    # Step 2: CSRF token
-    resp = session.get(f"{ODOO_URL}/web")
-    match = re.search(r'var odoo = {\s*csrf_token: "([A-Za-z0-9]+)"', resp.text)
-    csrf_token = match.group(1) if match else None
-    
-    # Step 3: Create wizard
+    login_payload = {
+        "jsonrpc": "2.0",
+        "params": {"db": ODOO_DB, "login": ODOO_USERNAME, "password": ODOO_PASSWORD},
+    }
+    log("Authenticating to Odoo…")
+    r = session.post(login_url, json=login_payload, timeout=30)
+    r.raise_for_status()
+    uid = r.json().get("result", {}).get("uid")
+    if not uid:
+        log(f"❌ Login failed: {r.text[:500]}")
+        return None
+
+    # -- Step 2: fetch CSRF from /web
+    log("Fetching CSRF token…")
+    r = session.get(f"{ODOO_URL}/web", timeout=30)
+    r.raise_for_status()
+    m = re.search(r'csrf_token:\s*"([A-Za-z0-9]+)"', r.text)
+    csrf_token = m.group(1) if m else None
+    if not csrf_token:
+        log("⚠️ CSRF token not found, proceeding without explicit header (server may still accept).")
+
+    # -- Step 3: create wizard
     create_url = f"{ODOO_URL}/web/dataset/call_kw/{MODEL}/create"
-    resp = session.post(create_url, json={
+    log(f"Creating wizard for model={MODEL} …")
+    r = session.post(create_url, json={
         "jsonrpc": "2.0",
         "method": "call",
-        "params": {"model": MODEL, "method": "create", "args": [{}], "kwargs": {"context": {"uid": uid}}}
-    })
-    wizard_id = resp.json().get("result")
+        "params": {"model": MODEL, "method": "create", "args": [{}], "kwargs": {"context": {"uid": uid}}},
+    }, timeout=30)
+    r.raise_for_status()
+    wizard_id = r.json().get("result")
+    if not wizard_id:
+        log(f"❌ Wizard create failed: {r.text[:500]}")
+        return None
 
-    # Step 3b: Save wizard with dates
+    # -- Step 3b: save wizard with dates
     save_url = f"{ODOO_URL}/web/dataset/call_kw/{MODEL}/web_save"
-    resp = session.post(save_url, json={
+    log(f"Saving wizard {wizard_id} with dates {DATE_FROM} → {DATE_TO} …")
+    r = session.post(save_url, json={
         "jsonrpc": "2.0",
         "method": "call",
         "params": {
@@ -112,61 +125,103 @@ def download_from_odoo():
             "method": "web_save",
             "args": [[], {"report_type": REPORT_TYPE, "date_from": DATE_FROM, "date_to": DATE_TO}],
             "kwargs": {
-                "context": {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [3]},
-                "specification": {"report_type": {}, "date_from": {}, "date_to": {}}
-            }
-        }
-    })
-    wizard_id = resp.json().get("result", [{}])[0].get("id")
+                "context": {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [COMPANY_ID]},
+                "specification": {"report_type": {}, "date_from": {}, "date_to": {}},
+            },
+        },
+    }, timeout=30)
+    r.raise_for_status()
+    res_list = r.json().get("result") or [{}]
+    saved_id = (res_list[0] or {}).get("id") if isinstance(res_list, list) else None
+    wizard_id = saved_id or wizard_id
 
-    # Step 4: Call report button
+    # -- Step 4: call the report button
     button_url = f"{ODOO_URL}/web/dataset/call_button"
-    resp = session.post(button_url, json={
+    log(f"Calling report button method={REPORT_BUTTON_METHOD} …")
+    r = session.post(button_url, json={
         "jsonrpc": "2.0",
         "method": "call",
         "params": {
             "model": MODEL,
             "method": REPORT_BUTTON_METHOD,
             "args": [[wizard_id]],
-            "kwargs": {"context": {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [1]}}
-        }
-    })
-    report_info = resp.json().get("result")
+            "kwargs": {"context": {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [COMPANY_ID]}},
+        },
+    }, timeout=30)
+    r.raise_for_status()
+    report_info = r.json().get("result") or {}
+    report_template = report_info.get("report_name") or REPORT_TEMPLATE_FALLBACK
 
-    # Step 5: Prepare download payload
-    options = {"date_from": DATE_FROM, "date_to": DATE_TO, "company_id": 3}
-    context = {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [3],
-               "active_model": MODEL, "active_id": wizard_id, "active_ids": [wizard_id]}
-    REPORT_TEMPLATE = report_info.get("report_name") or "taps_manufacturing.pi_xls_template"
-    report_path = f"/report/xlsx/{REPORT_TEMPLATE}?options={json.dumps(options)}&context={json.dumps(context)}"
-    download_payload = {"data": json.dumps([report_path, "xlsx"]), "context": json.dumps(context),
-                        "token": "dummy-because-api-expects-one", "csrf_token": csrf_token}
+    # -- Step 5: /report/download
+    log(f"Downloading report using template={report_template} …")
+    options = {"date_from": DATE_FROM, "date_to": DATE_TO, "company_id": COMPANY_ID}
+    context = {
+        "lang": "en_US", "tz": "Asia/Dhaka", "uid": uid,
+        "allowed_company_ids": [COMPANY_ID],
+        "active_model": MODEL, "active_id": wizard_id, "active_ids": [wizard_id],
+    }
+    report_path = f"/report/xlsx/{report_template}?options={json.dumps(options)}&context={json.dumps(context)}"
+    payload = {
+        "data": json.dumps([report_path, "xlsx"]),
+        "context": json.dumps(context),
+        "token": "dummy",
+    }
+    headers = {"Referer": f"{ODOO_URL}/web"}
+    if csrf_token:
+        headers["X-CSRF-Token"] = csrf_token
 
-    download_url = f"{ODOO_URL}/report/download"
-    headers = {"X-CSRF-Token": csrf_token, "Referer": f"{ODOO_URL}/web"}
-    resp = session.post(download_url, data=download_payload, headers=headers, timeout=60)
+    r = session.post(f"{ODOO_URL}/report/download", data=payload, headers=headers, timeout=60)
+    if r.status_code == 200 and r.headers.get("content-type", "").startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ):
+        fname = os.path.join(BASE_DOWNLOAD_DIR, f"{REPORT_TYPE}_{DATE_FROM}_to_{DATE_TO}.xlsx")
+        with open(fname, "wb") as f:
+            f.write(r.content)
+        log(f"Saved report: {fname}")
+        return fname
 
-    if resp.status_code == 200 and resp.headers.get("content-type", "").startswith(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"):
-        filename = os.path.join(BASE_DOWNLOAD_DIR, f"{REPORT_TYPE}_{DATE_FROM}_to_{DATE_TO}.xlsx")
-        with open(filename, "wb") as f:
-            f.write(resp.content)
-        return filename
-    else:
-        print("❌ Download failed:", resp.text[:500])
-        return None
+    log(f"❌ Download failed: {r.status_code} {r.text[:500]}")
+    return None
+
+# -------------------------
+# Paste into Google Sheet
+# -------------------------
+def update_google_sheet_with_file(file_path, sheet_name):
+    df = pd.read_excel(file_path, engine="openpyxl")
+    # numeric cleanup for columns 2..PASTE_COLUMNS
+    for col in df.columns[1:PASTE_COLUMNS]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").round(2)
+    df = df.where(pd.notnull(df), "")
+    df_to_paste = df.iloc[:, 0:PASTE_COLUMNS]
+    values = [df_to_paste.columns.tolist()] + df_to_paste.values.tolist()
+
+    service = get_google_sheets_service()
+    # adjust range width (A:I for 9 cols)
+    last_col_letter = chr(ord('A') + PASTE_COLUMNS - 1)
+    service.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:{last_col_letter}").execute()
+    service.update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{sheet_name}!A1",
+        valueInputOption="USER_ENTERED",
+        body={"values": values},
+    ).execute()
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
 # -------------------------
 # Main
 # -------------------------
 def main():
-    print("Starting Odoo report download and Google Sheet update...")
-    downloaded_file = download_from_odoo()
-    if downloaded_file:
-        update_google_sheet_with_file(downloaded_file, sheet_name=SHEET_NAME)
-        print("✅ Google Sheet updated successfully.")
-    else:
-        print("❌ Download failed; exiting with non-zero.")
+    log(f"Starting report run: {DATE_FROM} → {DATE_TO}")
+    try:
+        fpath = download_from_odoo()
+        if not fpath:
+            log("Download failed; exiting non-zero.")
+            raise SystemExit(1)
+        update_google_sheet_with_file(fpath, SHEET_NAME)
+        log("✅ Sheet updated successfully.")
+    except Exception:
+        log("❌ Fatal error:\n" + traceback.format_exc())
         raise SystemExit(1)
 
 if __name__ == "__main__":
