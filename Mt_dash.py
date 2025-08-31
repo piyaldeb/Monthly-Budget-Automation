@@ -275,7 +275,7 @@ def update_google_sheet_with_file(file_path, sheet_name):
     df_to_paste = df.iloc[:, 0:PASTE_COLUMNS]
     values = [df_to_paste.columns.tolist()] + df_to_paste.values.tolist()
     service = get_google_sheets_service()
-    service.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:Y").execute()
+    service.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:I").execute()
     service.update(
         spreadsheetId=SPREADSHEET_ID,
         range=f"{sheet_name}!A1",
