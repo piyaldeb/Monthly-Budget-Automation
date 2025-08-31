@@ -78,7 +78,7 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
         run: |
-          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Mt.py
+          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Mt_db.py
 
       - name: Run Zipper script
         if: ${{ github.event_name != 'workflow_dispatch' && true || inputs.run_all == true || inputs.run_zip == true }}
