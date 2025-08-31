@@ -1,228 +1,170 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import os
-import re
-import json
-import time
-import glob
-import traceback
+import requests, json, re, html
+from urllib.parse import urljoin
 from datetime import datetime
 
-import requests
-import pandas as pd
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
+# ========= CONFIG ==========
+ODOO_URL  = "https://taps.odoo.com"
+DB        = "masbha-tex-taps-master-2093561"
+USERNAME  = "ranak@texzipperbd.com"
+PASSWORD  = "2326"
 
-# -------------------------
-# Config (env-first)
-# -------------------------
-BASE_DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "downloads")
-os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
+MODEL                = "mrp.report.custom"            # Wizard model
+REPORT_BUTTON_METHOD = "action_generate_xlsx_report"  # Button method
+REPORT_TYPE          = "s_invs"                       # Your report type flag (saved into wizard)
 
-# Odoo
-ODOO_URL      = os.environ.get("ODOO_URL", "https://taps.odoo.com").rstrip("/")
-ODOO_DB       = os.environ.get("ODOO_DB", "taps")           # <- set your DB name
-ODOO_USERNAME = os.environ.get("ODOO_USERNAME", "ranak@texzipperbd.com")
-ODOO_PASSWORD = os.environ.get("ODOO_PASSWORD", "2326")
-COMPANY_ID    = int(os.environ.get("ODOO_COMPANY_ID", "3"))  # allowed_company_ids, options.company_id
+DATE_FROM = "2025-08-01"
+DATE_TO   = datetime.now().strftime("%Y-%m-%d")
+COMPANY_ID = 3  # keep consistent everywhere
 
-# Report flow (model + button + report type)
-MODEL                = os.environ.get("ODOO_WIZARD_MODEL", "taps_manufacturing.pi.wizard")
-REPORT_TYPE          = os.environ.get("ODOO_REPORT_TYPE", "pi_xls")
-REPORT_BUTTON_METHOD = os.environ.get("ODOO_REPORT_BUTTON", "print_xlsx")
-REPORT_TEMPLATE_FALLBACK = os.environ.get("ODOO_REPORT_TEMPLATE", "taps_manufacturing.pi_xls_template")
+session = requests.Session()
+session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
 
-# Date window (DD/MM/YYYY)
-DATE_FROM = os.environ.get("DATE_FROM", "01/08/2025")
-DATE_TO   = os.environ.get("DATE_TO",   "31/08/2025")
+def dbg(label, resp, max_len=600):
+    ct = resp.headers.get("content-type","")
+    print(f"\n=== {label} ===\n{resp.status_code} {ct}\n{resp.text[:max_len]}")
 
-# Google Sheets
-SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
-SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I")
-SHEET_NAME     = os.environ.get("SHEET_NAME", "Mt")
-PASTE_COLUMNS  = int(os.environ.get("PASTE_COLUMNS", "9"))  # Metal only needs 9 cols
+def json_or_error(resp):
+    try:
+        data = resp.json()
+    except Exception:
+        dbg("Non-JSON response", resp)
+        raise SystemExit("Server did not return JSON where expected.")
+    if "error" in data:
+        # Pretty print Odoo error
+        err = data["error"]
+        msg = err.get("message")
+        name = err.get("data",{}).get("name")
+        debug = err.get("data",{}).get("debug","")[:1000]
+        raise SystemExit(f"Odoo JSON-RPC error: {name or ''} | {msg or ''}\n{debug}")
+    return data
 
-# -------------------------
-# Utility
-# -------------------------
-def log(msg: str):
-    print(f"{datetime.now()} {msg}", flush=True)
-
-def _list_files(d, patterns=("*.xlsx","*.xls")):
-    files = []
-    for p in patterns:
-        files.extend(glob.glob(os.path.join(d, p)))
-    return sorted(files, key=os.path.getmtime)
-
-# -------------------------
-# Google Sheets helpers
-# -------------------------
-def get_google_sheets_service():
-    if not os.path.exists(SERVICE_ACCOUNT_FILE):
-        raise FileNotFoundError(f"Service account JSON not found: {SERVICE_ACCOUNT_FILE}")
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=["https://www.googleapis.com/auth/spreadsheets"]
-    )
-    return build("sheets", "v4", credentials=creds).spreadsheets().values()
-
-# -------------------------
-# Download Odoo Report (HTTP API flow)
-# -------------------------
-def download_from_odoo() -> str | None:
-    """
-    Logs into Odoo, configures the report wizard and downloads an XLSX.
-    Returns local filename or None.
-    """
-    session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0"})
-
-    # -- Step 1: login
-    login_url = f"{ODOO_URL}/web/session/authenticate"
-    login_payload = {
-        "jsonrpc": "2.0",
-        "params": {"db": ODOO_DB, "login": ODOO_USERNAME, "password": ODOO_PASSWORD},
-    }
-    log("Authenticating to Odoo…")
-    r = session.post(login_url, json=login_payload, timeout=30)
-    r.raise_for_status()
-    uid = r.json().get("result", {}).get("uid")
-    if not uid:
-        log(f"❌ Login failed: {r.text[:500]}")
-        return None
-
-    # -- Step 2: fetch CSRF from /web
-    log("Fetching CSRF token…")
-    r = session.get(f"{ODOO_URL}/web", timeout=30)
-    r.raise_for_status()
-    m = re.search(r'csrf_token:\s*"([A-Za-z0-9]+)"', r.text)
-    csrf_token = m.group(1) if m else None
-    if not csrf_token:
-        log("⚠️ CSRF token not found, proceeding without explicit header (server may still accept).")
-
-    # -- Step 3: create wizard
-    create_url = f"{ODOO_URL}/web/dataset/call_kw/{MODEL}/create"
-    log(f"Creating wizard for model={MODEL} …")
-    r = session.post(create_url, json={
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {"model": MODEL, "method": "create", "args": [{}], "kwargs": {"context": {"uid": uid}}},
-    }, timeout=30)
-    r.raise_for_status()
-    wizard_id = r.json().get("result")
-    if not wizard_id:
-        log(f"❌ Wizard create failed: {r.text[:500]}")
-        return None
-
-    # -- Step 3b: save wizard with dates
-    save_url = f"{ODOO_URL}/web/dataset/call_kw/{MODEL}/web_save"
-    log(f"Saving wizard {wizard_id} with dates {DATE_FROM} → {DATE_TO} …")
-    r = session.post(save_url, json={
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": MODEL,
-            "method": "web_save",
-            "args": [[], {"report_type": REPORT_TYPE, "date_from": DATE_FROM, "date_to": DATE_TO}],
-            "kwargs": {
-                "context": {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [COMPANY_ID]},
-                "specification": {"report_type": {}, "date_from": {}, "date_to": {}},
-            },
-        },
-    }, timeout=30)
-    r.raise_for_status()
-    res_list = r.json().get("result") or [{}]
-    saved_id = (res_list[0] or {}).get("id") if isinstance(res_list, list) else None
-    wizard_id = saved_id or wizard_id
-
-    # -- Step 4: call the report button
-    button_url = f"{ODOO_URL}/web/dataset/call_button"
-    log(f"Calling report button method={REPORT_BUTTON_METHOD} …")
-    r = session.post(button_url, json={
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": MODEL,
-            "method": REPORT_BUTTON_METHOD,
-            "args": [[wizard_id]],
-            "kwargs": {"context": {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [COMPANY_ID]}},
-        },
-    }, timeout=30)
-    r.raise_for_status()
-    report_info = r.json().get("result") or {}
-    report_template = report_info.get("report_name") or REPORT_TEMPLATE_FALLBACK
-
-    # -- Step 5: /report/download
-    log(f"Downloading report using template={report_template} …")
-    options = {"date_from": DATE_FROM, "date_to": DATE_TO, "company_id": COMPANY_ID}
-    context = {
-        "lang": "en_US", "tz": "Asia/Dhaka", "uid": uid,
-        "allowed_company_ids": [COMPANY_ID],
-        "active_model": MODEL, "active_id": wizard_id, "active_ids": [wizard_id],
-    }
-    report_path = f"/report/xlsx/{report_template}?options={json.dumps(options)}&context={json.dumps(context)}"
-    payload = {
-        "data": json.dumps([report_path, "xlsx"]),
-        "context": json.dumps(context),
-        "token": "dummy",
-    }
-    headers = {"Referer": f"{ODOO_URL}/web"}
-    if csrf_token:
-        headers["X-CSRF-Token"] = csrf_token
-
-    r = session.post(f"{ODOO_URL}/report/download", data=payload, headers=headers, timeout=60)
-    if r.status_code == 200 and r.headers.get("content-type", "").startswith(
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    ):
-        fname = os.path.join(BASE_DOWNLOAD_DIR, f"{REPORT_TYPE}_{DATE_FROM}_to_{DATE_TO}.xlsx")
-        with open(fname, "wb") as f:
-            f.write(r.content)
-        log(f"Saved report: {fname}")
-        return fname
-
-    log(f"❌ Download failed: {r.status_code} {r.text[:500]}")
+def find_csrf_token(html_text: str):
+    # several shapes across Odoo versions
+    m = re.search(r'csrf_token:\s*"([^"]+)"', html_text)
+    if m: return m.group(1)
+    m = re.search(r'<meta[^>]+name=["\']csrf-token["\'][^>]+content=["\']([^"\']+)["\']', html_text, re.I)
+    if m: return html.unescape(m.group(1))
+    m = re.search(r'<input[^>]+name=["\']csrf_token["\'][^>]+value=["\']([^"\']+)["\']', html_text, re.I)
+    if m: return html.unescape(m.group(1))
     return None
 
-# -------------------------
-# Paste into Google Sheet
-# -------------------------
-def update_google_sheet_with_file(file_path, sheet_name):
-    df = pd.read_excel(file_path, engine="openpyxl")
-    # numeric cleanup for columns 2..PASTE_COLUMNS
-    for col in df.columns[1:PASTE_COLUMNS]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").round(2)
-    df = df.where(pd.notnull(df), "")
-    df_to_paste = df.iloc[:, 0:PASTE_COLUMNS]
-    values = [df_to_paste.columns.tolist()] + df_to_paste.values.tolist()
+def login():
+    # Try JSON-RPC login a
+    r = session.post(
+        f"{ODOO_URL}/web/session/authenticate",
+        json={"jsonrpc": "2.0", "params": {"db": DB, "login": USERNAME, "password": PASSWORD}},
+        timeout=30
+    )
+    if r.ok and r.headers.get("content-type","").startswith("application/json"):
+        data = json_or_error(r)
+        uid = (data.get("result") or {}).get("uid")
+        if uid:
+            rw = session.get(f"{ODOO_URL}/web", timeout=30)
+            csrf = find_csrf_token(rw.text) if rw.ok else None
+            return uid, csrf
 
-    service = get_google_sheets_service()
-    # adjust range width (A:I for 9 cols)
-    last_col_letter = chr(ord('A') + PASTE_COLUMNS - 1)
-    service.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:{last_col_letter}").execute()
-    service.update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{sheet_name}!A1",
-        valueInputOption="USER_ENTERED",
-        body={"values": values},
-    ).execute()
-    if os.path.exists(file_path):
-        os.remove(file_path)
+    # Fallback: form login
+    rg = session.get(f"{ODOO_URL}/web/login", timeout=30)
+    rg.raise_for_status()
+    csrf = find_csrf_token(rg.text)
+    form = {"login": USERNAME, "password": PASSWORD, "db": DB}
+    if csrf: form["csrf_token"] = csrf
+    rp = session.post(f"{ODOO_URL}/web/login", data=form, headers={"Referer": f"{ODOO_URL}/web/login"}, timeout=30, allow_redirects=True)
+    rp.raise_for_status()
+    ri = session.get(f"{ODOO_URL}/web/session/get_session_info", timeout=30)
+    uid = None
+    if ri.ok and ri.headers.get("content-type","").startswith("application/json"):
+        uid = (ri.json().get("result") or {}).get("uid")
+    rw = session.get(f"{ODOO_URL}/web", timeout=30)
+    csrf = find_csrf_token(rw.text) or csrf
+    return uid, csrf
 
-# -------------------------
-# Main
-# -------------------------
+def rpc_call_kw(model, method, args=None, kwargs=None):
+    payload = {"jsonrpc":"2.0","method":"call","params":{"model":model,"method":method,"args":args or [],"kwargs":kwargs or {}}}
+    r = session.post(f"{ODOO_URL}/web/dataset/call_kw/{model}/{method}", json=payload, timeout=60)
+    data = json_or_error(r)
+    return data.get("result")
+
+def call_button(model, method, args=None, kwargs=None):
+    payload = {"jsonrpc":"2.0","method":"call","params":{"model":model,"method":method,"args":args or [],"kwargs":kwargs or {}}}
+    r = session.post(f"{ODOO_URL}/web/dataset/call_button", json=payload, timeout=60)
+    data = json_or_error(r)
+    return data.get("result")
+
 def main():
-    log(f"Starting report run: {DATE_FROM} → {DATE_TO}")
-    try:
-        fpath = download_from_odoo()
-        if not fpath:
-            log("Download failed; exiting non-zero.")
-            raise SystemExit(1)
-        update_google_sheet_with_file(fpath, SHEET_NAME)
-        log("✅ Sheet updated successfully.")
-    except Exception:
-        log("❌ Fatal error:\n" + traceback.format_exc())
-        raise SystemExit(1)
+    print(f"▶ Run: {DATE_FROM} → {DATE_TO}")
+    uid, csrf = login()
+    if not uid:
+        raise SystemExit("❌ Login failed — check DB/username/password.")
+    print(f"✅ Logged in, uid={uid}, csrf={'yes' if csrf else 'no'}")
+
+    # Step 3: create wizard
+    wiz_id = rpc_call_kw(MODEL, "create", args=[[{}]], kwargs={"context":{"uid":uid}})
+    if not wiz_id:
+        raise SystemExit("❌ Wizard create returned no id.")
+    print(f"✅ Wizard created: {wiz_id}")
+
+    # Step 3b: save wizard fields (report_type + date range)
+    save_res = rpc_call_kw(
+        MODEL, "web_save",
+        args=[[], {"report_type": REPORT_TYPE, "date_from": DATE_FROM, "date_to": DATE_TO}],
+        kwargs={
+            "context": {"lang":"en_US","tz":"Asia/Dhaka","uid":uid,"allowed_company_ids":[COMPANY_ID]},
+            "specification": {"report_type": {}, "date_from": {}, "date_to": {}}
+        }
+    )
+    # some servers return a list of records
+    if isinstance(save_res, list) and save_res:
+        wiz_id = (save_res[0] or {}).get("id", wiz_id)
+    print(f"✅ Wizard saved as id={wiz_id}")
+
+    # Step 4: press the button to prepare report
+    button_res = call_button(
+        MODEL, REPORT_BUTTON_METHOD,
+        args=[[wiz_id]],
+        kwargs={"context":{"lang":"en_US","tz":"Asia/Dhaka","uid":uid,"allowed_company_ids":[COMPANY_ID]}}
+    )
+    print("ℹ️ Button result:", json.dumps(button_res, indent=2))
+
+    # Resolve download path
+    report_template = None
+    report_url_path = None
+    if isinstance(button_res, dict):
+        # new Odoo often returns a dict with "url" or "report_name"
+        report_template = button_res.get("report_name")
+        report_url_path = button_res.get("url")
+
+    headers = {"Referer": f"{ODOO_URL}/web"}
+    if csrf: headers["X-CSRF-Token"] = csrf
+
+    if report_url_path:
+        # Example: "/report/xlsx/module.template?options=...&context=..."
+        dl_url = urljoin(ODOO_URL, report_url_path)
+        print("➡ Download via returned URL:", dl_url)
+        r = session.get(dl_url, headers=headers, timeout=120, allow_redirects=True)
+    else:
+        # Step 5: build /report/download payload
+        if not report_template:
+            report_template = "taps_manufacturing.pi_xls_template"  # fallback
+        options = {"date_from": DATE_FROM, "date_to": DATE_TO, "company_id": COMPANY_ID}
+        context = {
+            "lang":"en_US","tz":"Asia/Dhaka","uid":uid,"allowed_company_ids":[COMPANY_ID],
+            "active_model":MODEL,"active_id":wiz_id,"active_ids":[wiz_id]
+        }
+        report_path = f"/report/xlsx/{report_template}?options={json.dumps(options)}&context={json.dumps(context)}"
+        payload = {"data": json.dumps([report_path, "xlsx"]), "context": json.dumps(context), "token": "dummy"}
+        print("➡ POST /report/download")
+        r = session.post(f"{ODOO_URL}/report/download", data=payload, headers=headers, timeout=120)
+
+    ct = r.headers.get("content-type","")
+    if r.status_code == 200 and ct.startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"):
+        fname = f"{REPORT_TYPE}_{DATE_FROM}_to_{DATE_TO}.xlsx"
+        with open(fname, "wb") as f:
+            f.write(r.content)
+        print(f"✅ Downloaded: {fname}")
+    else:
+        dbg("Download failed", r)
+        raise SystemExit("❌ Report download failed.")
 
 if __name__ == "__main__":
     main()
