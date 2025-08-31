@@ -25,7 +25,7 @@ PASSWORD   = os.environ.get("ODOO_PASSWORD", "2326")
 MODEL                 = os.environ.get("ODOO_WIZARD_MODEL", "mrp.report.custom")
 REPORT_BUTTON_METHOD  = os.environ.get("ODOO_REPORT_BUTTON", "action_generate_xlsx_report")
 REPORT_TYPE           = os.environ.get("ODOO_REPORT_TYPE",   "invs")      # 'pi' | 'pir' | 'r_invs'
-COMPANY_ID            = int(os.environ.get("ODOO_COMPANY_ID", "3"))         # 3 = Metal (per your context)
+COMPANY_ID            = int(os.environ.get("ODOO_COMPANY_ID", "1"))         # 3 = Metal (per your context)
 TZ                    = os.environ.get("ODOO_TZ", "Asia/Dhaka")
 
 # Dates (YYYY-MM-DD for Odoo)
@@ -301,7 +301,7 @@ def main():
         # Clean up the local file
         if os.path.exists(xlsx_path):
             os.remove(xlsx_path)
-        log("🎉 Done.Metal Sheet")
+        log("🎉 Done. Zipper")
     except Exception as e:
         log("❌ Fatal error:")
         traceback.print_exc()
