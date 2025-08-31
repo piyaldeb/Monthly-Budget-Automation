@@ -2,8 +2,8 @@ name: Daily Odoo Report Automation
 
 on:
   schedule:
-    # Runs every day at 9:00 AM Asia/Dhaka (03:00 UTC)
-    - cron: "0 3 * * *"
+     # Runs every 30 minutes between 9:00 AM and 1:00 PM Asia/Dhaka (03:00–07:00 UTC)
+    - cron: "0,30 3-6 * * *"
 
   workflow_dispatch:
     inputs:
