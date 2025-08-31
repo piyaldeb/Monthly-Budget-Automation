@@ -1,53 +1,61 @@
 import os
+import re
+import json
 import time
 import glob
 import traceback
+from datetime import datetime
+import requests
 import pandas as pd
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from datetime import datetime, timedelta
-import chromedriver_autoinstaller
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# -------------------------
-# Config (logic unchanged)
-# -------------------------
-BASE_DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "downloads")   # base folder
-ODOO_URL = "https://taps.odoo.com"
-ODOO_USERNAME = os.environ.get("ODOO_USERNAME", "ranak@texzipperbd.com")
-ODOO_PASSWORD = os.environ.get("ODOO_PASSWORD", "2326")
-
-SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
-SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I")
-SHEET_NAME = os.environ.get("SHEET_NAME", "Mt_Dash")
-PASTE_COLUMNS = int(os.environ.get("PASTE_COLUMNS", "25"))
-
+# ===============================
+# Config (env first, fallback)
+# ===============================
+BASE_DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "downloads")
 os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
 
-# Separate XPaths for Date From and Export button (Date To is NOT used)
-DATE_FROM_INPUT_XPATH = "/html/body/div[2]/div[2]/div/div/div/div/main/div/div/div/div/div/div[2]/div[2]/div/div/input"
+ODOO_URL   = os.environ.get("ODOO_URL",   "https://taps.odoo.com").rstrip("/")
+DB         = os.environ.get("ODOO_DB",    "masbha-tex-taps-master-2093561")
+USERNAME   = os.environ.get("ODOO_USERNAME", "ranak@texzipperbd.com")
+PASSWORD   = os.environ.get("ODOO_PASSWORD", "2326")
 
-# Footer scope where we will search for the "Download Excel" button
-FOOTER_BASE_XPATH = "/html/body/div[2]/div[2]/div/div/div/div/footer"
+# Wizard / report config
+MODEL                 = os.environ.get("ODOO_WIZARD_MODEL", "mrp.report.custom")
+REPORT_BUTTON_METHOD  = os.environ.get("ODOO_REPORT_BUTTON", "action_generate_xlsx_report")
+REPORT_TYPE           = os.environ.get("ODOO_REPORT_TYPE",   "invs")      # 'pi' | 'pir' | 'r_invs'
+COMPANY_ID            = int(os.environ.get("ODOO_COMPANY_ID", "3"))         # 3 = Metal (per your context)
+TZ                    = os.environ.get("ODOO_TZ", "Asia/Dhaka")
 
-EXPORT_BTN_XPATH = (
-    FOOTER_BASE_XPATH
-    + "//button[normalize-space(text())='Download Excel' "
-      "or normalize-space(span/text())='Download Excel' "
-      "or contains(normalize-space(.), 'Download Excel')]"
-)
+# Dates (YYYY-MM-DD for Odoo)
+DATE_FROM = os.environ.get("DATE_FROM", "2025-01-01")
+DATE_TO   = os.environ.get("DATE_TO",   datetime.now().strftime("%Y-%m-%d"))
 
+# Google Sheets
+SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
+SPREADSHEET_ID       = os.environ.get("SPREADSHEET_ID", "1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I")
+SHEET_NAME           = os.environ.get("SHEET_NAME", "Mt")
+PASTE_COLUMNS        = int(os.environ.get("PASTE_COLUMNS", "9"))  # A:I for 9 columns
+
+# ===============================
+# Utilities
+# ===============================
 def log(msg: str):
     print(f"{datetime.now()} {msg}", flush=True)
 
-# -------------------------
-# Google Sheets (unchanged)
-# -------------------------
-def get_google_sheets_service():
+def newest_file(directory, patterns=("*.xlsx","*.xls")):
+    files = []
+    for p in patterns:
+        files.extend(glob.glob(os.path.join(directory, p)))
+    if not files:
+        return None
+    return max(files, key=os.path.getmtime)
+
+# ===============================
+# Google Sheets helpers
+# ===============================
+def get_google_sheets_service_values():
     if not os.path.exists(SERVICE_ACCOUNT_FILE):
         raise FileNotFoundError(f"Service account JSON not found: {SERVICE_ACCOUNT_FILE}")
     creds = service_account.Credentials.from_service_account_file(
@@ -55,248 +63,248 @@ def get_google_sheets_service():
     )
     return build("sheets", "v4", credentials=creds).spreadsheets().values()
 
-# -------------------------
-# Download helpers
-# -------------------------
-def _list_files(d, patterns=("*.xlsx","*.xls","*.crdownload")):
-    files = []
-    for p in patterns:
-        files.extend(glob.glob(os.path.join(d, p)))
-    return sorted(files, key=os.path.getmtime)
-
-def _human_size(path):
-    try:
-        return f"{os.path.getsize(path)}B"
-    except Exception:
-        return "?"
-
-def allow_headless_downloads(driver, download_dir):
-    driver.execute_cdp_cmd("Page.setDownloadBehavior", {
-        "behavior": "allow",
-        "downloadPath": os.path.abspath(download_dir)
-    })
-
-def wait_for_download_complete(download_dir, start_time, timeout=180, quiet_gap=2):
-    log(f"Waiting for download in {download_dir} (timeout {timeout}s)...")
-    end = time.time() + timeout
-    last_log = 0
-
-    while time.time() < end:
-        time.sleep(1)
-        finished = _list_files(download_dir, ("*.xlsx","*.xls"))
-        for f in finished:
-            try:
-                mt = os.path.getmtime(f)
-                ct = os.path.getctime(f)
-            except FileNotFoundError:
-                continue
-            if mt >= start_time or ct >= start_time:
-                time.sleep(quiet_gap)
-                log(f"Download completed: {os.path.basename(f)} ({_human_size(f)})")
-                return f
-        # heartbeat logging
-        if time.time() - last_log > 10:
-            temps = _list_files(download_dir)
-            contents = [os.path.basename(x)+"["+_human_size(x)+"]" for x in temps]
-            if contents:
-                log("Downloads dir status: " + ", ".join(contents))
-            else:
-                log("Downloads dir empty; waiting for export.")
-            last_log = time.time()
-    log("Download timed out.")
-    return None
-
-def _norm_ddmmyy(s: str) -> str:
-    s = s.strip()
-    parts = s.split("/")
-    if len(parts) == 3 and len(parts[2]) == 4:
-        return f"{parts[0]}/{parts[1]}/{parts[2][-2:]}"
-    return s
-
-# -------------------------
-# Resilient interaction helpers
-# -------------------------
-def safe_click(driver, wait, xpath, tries=3, sleep=0.8):
-    for i in range(1, tries+1):
-        el = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-        try:
-            wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
-            el.click()
-            return True
-        except Exception:
-            try:
-                driver.execute_script("arguments[0].click();", el)
-                return True
-            except Exception:
-                time.sleep(sleep)
-    raise RuntimeError(f"Failed to click {xpath}")
-
-def type_xpath(driver, wait, xpath, text, press_enter=True):
-    el = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
-    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-    el.click()
-    el.send_keys(Keys.CONTROL, "a")
-    el.send_keys(Keys.BACKSPACE)
-    el.send_keys(text)
-    if press_enter:
-        el.send_keys(Keys.ENTER)
-    return el
-
-# -------------------------
-# Selenium: Download Report
-# -------------------------
-def download_from_odoo(company="Zipper", date_from="01/01/2025"):
-    run_dir = os.path.join(BASE_DOWNLOAD_DIR, datetime.now().strftime("run_%Y%m%d_%H%M%S"))
-    os.makedirs(run_dir, exist_ok=True)
-
-    chromedriver_autoinstaller.install()
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless=new")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("prefs", {
-        "download.default_directory": os.path.abspath(run_dir),
-        "download.prompt_for_download": False,
-        "directory_upgrade": True,
-        "safebrowsing.enabled": True,
-        "profile.default_content_settings.popups": 0,
-    })
-    options.add_argument("--log-level=3")
-
-    driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(90)
-    driver.set_script_timeout(60)
-    wait = WebDriverWait(driver, 40)
-
-    try:
-        allow_headless_downloads(driver, run_dir)
-        log("Headless downloads enabled via CDP.")
-    except Exception as e:
-        log(f"CDP download permission failed (continuing): {e}")
-
-    try:
-        log("Opening Odoo login page...")
-        driver.get(ODOO_URL)
-        wait.until(EC.presence_of_element_located((By.NAME, "login"))).send_keys(ODOO_USERNAME)
-        driver.find_element(By.NAME, "password").send_keys(ODOO_PASSWORD)
-        driver.find_element(By.XPATH, "//button[contains(text(), 'Log in')]").click()
-        time.sleep(2)
-
-        log(f"Switching company to '{company}'...")
-        switcher = wait.until(EC.element_to_be_clickable(
-            (By.CSS_SELECTOR, "div.o_menu_systray div.o_switch_company_menu > button > span")
-        ))
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", switcher)
-        switcher.click()
-        time.sleep(1)
-        target_div = wait.until(EC.element_to_be_clickable(
-            (By.XPATH, f"//div[contains(@class, 'log_into')][span[contains(text(), '{company}')]]")
-        ))
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target_div)
-        target_div.click()
-        time.sleep(2)
-
-        log("Navigating to MRP REPORTS...")
-        body = driver.find_element(By.TAG_NAME, "body")
-        body.send_keys("MRP REPORTS")
-        body.send_keys(Keys.ENTER)
-        time.sleep(2)
-
-        log("Selecting 'Invoice Summary'...")
-        dropdown = wait.until(EC.element_to_be_clickable((By.XPATH, "//select")))
-        dropdown.click()
-        dropdown.send_keys("Invoice Summary")
-        dropdown.send_keys(Keys.ENTER)
-        time.sleep(1)
-
-        log("Setting From date...")
-        df = _norm_ddmmyy(date_from)
-        date_from_input = wait.until(EC.presence_of_element_located((By.XPATH, DATE_FROM_INPUT_XPATH)))
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", date_from_input)
-        date_from_input.click()
-        date_from_input.send_keys(Keys.CONTROL, "a")
-        date_from_input.send_keys(Keys.BACKSPACE)
-        date_from_input.send_keys(df)
-        date_from_input.send_keys(Keys.ENTER)
-        time.sleep(0.5)
-
-        log("Clicking Download Excel...")
-        footer_el = wait.until(EC.presence_of_element_located((By.XPATH, FOOTER_BASE_XPATH)))
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", footer_el)
-
-        export_btn = wait.until(EC.presence_of_element_located((By.XPATH, EXPORT_BTN_XPATH)))
-
-        for _ in range(10):
-            if not export_btn.get_attribute("disabled"):
-                break
-            time.sleep(0.2)
-
-        for i in range(1, 4):
-            click_time = time.time()
-            try:
-                wait.until(EC.element_to_be_clickable((By.XPATH, EXPORT_BTN_XPATH)))
-                export_btn.click()
-            except Exception:
-                driver.execute_script("arguments[0].click();", export_btn)
-
-            log(f"Download Excel click attempt {i}/3...")
-            f = wait_for_download_complete(run_dir, start_time=click_time, timeout=180)
-            if f:
-                return f
-            time.sleep(2)
-
-        return None
-
-    except Exception:
-        log(f"Error during Odoo interaction:\n{traceback.format_exc()}")
-        try:
-            driver.save_screenshot(os.path.join(run_dir, "zip_error.png"))
-            with open(os.path.join(run_dir, "zip_error.html"), "w", encoding="utf-8") as fp:
-                fp.write(driver.page_source)
-        except Exception:
-            pass
-        return None
-    finally:
-        driver.quit()
-        log("Browser closed")
-
-# -------------------------
-# Update Google Sheet (unchanged logic)
-# -------------------------
-def update_google_sheet_with_file(file_path, sheet_name):
+def update_google_sheet_with_file(file_path: str, sheet_name: str, paste_cols: int):
     df = pd.read_excel(file_path, engine="openpyxl")
-    for col in df.columns[1:PASTE_COLUMNS]:
+    # Numeric rounding on columns 2..paste_cols (index 1..paste_cols-1)
+    for col in df.columns[1:paste_cols]:
         df[col] = pd.to_numeric(df[col], errors="coerce").round(2)
+    # Replace NaNs with blank for Sheets
     df = df.where(pd.notnull(df), "")
-    df_to_paste = df.iloc[:, 0:PASTE_COLUMNS]
+    df_to_paste = df.iloc[:, 0:paste_cols]
+
     values = [df_to_paste.columns.tolist()] + df_to_paste.values.tolist()
-    service = get_google_sheets_service()
-    service.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:I").execute()
-    service.update(
+    svc = get_google_sheets_service_values()
+    # Clear A:I (or A:whatever based on paste_cols)
+    last_col_letter = chr(ord('A') + paste_cols - 1)
+    svc.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:{last_col_letter}").execute()
+    svc.update(
         spreadsheetId=SPREADSHEET_ID,
         range=f"{sheet_name}!A1",
         valueInputOption="USER_ENTERED",
         body={"values": values}
     ).execute()
-    if os.path.exists(file_path):
-        os.remove(file_path)
+    log(f"✅ Google Sheet '{sheet_name}' updated with {len(values)-1} rows.")
 
-# -------------------------
-# Main (fixed date/company)
-# -------------------------
-def main():
-    date_from = "01/01/2025"
-    log("Starting Zip run...")
-    downloaded_file = download_from_odoo(company="Metal", date_from=date_from)
-    if downloaded_file:
-        update_google_sheet_with_file(downloaded_file, sheet_name=SHEET_NAME)
-        log("Zip sheet updated successfully.")
+# ===============================
+# Odoo (requests) flow
+# ===============================
+def odoo_login(session: requests.Session) -> int:
+    url = f"{ODOO_URL}/web/session/authenticate"
+    payload = {
+        "jsonrpc": "2.0",
+        "params": {"db": DB, "login": USERNAME, "password": PASSWORD},
+    }
+    r = session.post(url, json=payload)
+    r.raise_for_status()
+    uid = r.json().get("result", {}).get("uid")
+    if not uid:
+        raise RuntimeError(f"Login failed: {r.text[:500]}")
+    log(f"✅ Logged in, uid={uid}")
+    return uid
+
+def get_csrf_token(session: requests.Session) -> str:
+    # Not always needed for GET download, but we fetch it for the POST fallback route
+    r = session.get(f"{ODOO_URL}/web")
+    r.raise_for_status()
+    m = re.search(r'csrf_token:\s*"([A-Za-z0-9]+)"', r.text)
+    token = m.group(1) if m else ""
+    log(f"ℹ️ CSRF token: {token or '(none found)'}")
+    return token
+
+def wizard_create(session: requests.Session, uid: int) -> int:
+    url = f"{ODOO_URL}/web/dataset/call_kw/{MODEL}/create"
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": MODEL,
+            "method": "create",
+            "args": [{}],
+            "kwargs": {"context": {"uid": uid}},
+        },
+    }
+    r = session.post(url, json=payload)
+    r.raise_for_status()
+    wiz_id = r.json().get("result")
+    if not wiz_id:
+        raise RuntimeError(f"Wizard create failed: {r.text[:500]}")
+    log(f"✅ Wizard created: id={wiz_id}")
+    return wiz_id
+
+def wizard_save(session: requests.Session, uid: int, report_type: str, date_from: str, date_to: str) -> int:
+    url = f"{ODOO_URL}/web/dataset/call_kw/{MODEL}/web_save"
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": MODEL,
+            "method": "web_save",
+            "args": [[], {
+                "report_type": report_type,
+                "date_from": date_from,
+                "date_to": date_to
+            }],
+            "kwargs": {
+                "context": {
+                    "lang": "en_US",
+                    "tz": TZ,
+                    "uid": uid,
+                    "allowed_company_ids": [COMPANY_ID],
+                },
+                "specification": {"report_type": {}, "date_from": {}, "date_to": {}},
+            },
+        },
+    }
+    r = session.post(url, json=payload)
+    r.raise_for_status()
+    result = r.json().get("result") or []
+    wiz_id = result[0].get("id") if result and isinstance(result, list) else None
+    if not wiz_id:
+        raise RuntimeError(f"web_save failed: {r.text[:500]}")
+    log(f"✅ Wizard saved: id={wiz_id} ({report_type} {date_from}→{date_to})")
+    return wiz_id
+
+def press_report_button(session: requests.Session, uid: int, wiz_id: int) -> dict:
+    url = f"{ODOO_URL}/web/dataset/call_button"
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": MODEL,
+            "method": REPORT_BUTTON_METHOD,
+            "args": [[wiz_id]],
+            "kwargs": {
+                "context": {
+                    "lang": "en_US",
+                    "tz": TZ,
+                    "uid": uid,
+                    "allowed_company_ids": [COMPANY_ID],
+                }
+            },
+        },
+    }
+    r = session.post(url, json=payload)
+    r.raise_for_status()
+    result = r.json().get("result") or {}
+    # Expect an ir.actions.report dict
+    if not result or result.get("type") not in ("ir.actions.report", "ir_actions_report"):
+        log(f"⚠️ Unexpected button result (printing first 600 chars): {json.dumps(result, indent=2)[:600]}")
     else:
-        log("Download failed; exiting with non-zero for CI.")
+        log(f"✅ Button returned report action: {result.get('report_name')} ({result.get('report_type')})")
+    return result
+
+def build_report_paths(report_info: dict, date_from: str, date_to: str, uid: int, wiz_id: int):
+    """
+    Returns (relative_report_path, options, context) for xlsx download.
+    We prefer direct GET to /report/xlsx/<report_name>?options=...&context=...
+    """
+    report_name = report_info.get("report_name")
+    if not report_name:
+        # If server didn't include it, you must set a sensible default/mapping per report_type
+        # Fallback (update to the correct template on your server if needed):
+        fallback = {
+            # "pi":   "taps_manufacturing.pi_xls_template",
+            # "pir":  "taps_manufacturing.packing_invoice_summery_separated",
+            "invs":"taps_manufacturing.packing_invoice_summary",
+        }
+        report_name = fallback.get(REPORT_TYPE)
+        if not report_name:
+            raise RuntimeError("No report_name in action and no fallback mapping available. Please set one.")
+
+    options = {"date_from": date_from, "date_to": date_to, "company_id": COMPANY_ID}
+    context = {
+        "lang": "en_US",
+        "tz": TZ,
+        "uid": uid,
+        "allowed_company_ids": [COMPANY_ID],
+        "active_model": MODEL,
+        "active_id": wiz_id,
+        "active_ids": [wiz_id],
+    }
+    rel = f"/report/xlsx/{report_name}?options={json.dumps(options)}&context={json.dumps(context)}"
+    return rel, options, context
+
+def try_direct_get_xlsx(session: requests.Session, relative_path: str, out_path: str) -> bool:
+    url = f"{ODOO_URL}{relative_path}"
+    r = session.get(url, stream=True)
+    if r.status_code == 200 and r.headers.get("content-type","").startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ):
+        with open(out_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        return True
+    log(f"Direct GET failed: {r.status_code} {r.headers.get('content-type','')}\n{r.text[:500]}")
+    return False
+
+def try_report_download_post(session: requests.Session, csrf_token: str, relative_path: str, out_path: str) -> bool:
+    """
+    Fallback to /report/download with form-encoded fields, like the web client does.
+    """
+    url = f"{ODOO_URL}/report/download"
+    data = {
+        "data": json.dumps([relative_path, "xlsx"]),
+        "context": "{}",  # server doesn't strictly require here because it's in the URL already
+        "token": "filetoken-123",  # any string
+        "csrf_token": csrf_token or "",
+    }
+    headers = {"Referer": f"{ODOO_URL}/web"}
+    r = session.post(url, data=data, headers=headers, timeout=120)
+    if r.status_code == 200 and r.headers.get("content-type","").startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ):
+        with open(out_path, "wb") as f:
+            f.write(r.content)
+        return True
+    log(f"/report/download failed: {r.status_code}\nHeaders: {r.headers}\nBody: {r.text[:800]}")
+    return False
+
+def download_from_odoo(date_from: str, date_to: str) -> str:
+    """
+    Full flow → returns the path of the downloaded XLSX file.
+    """
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+
+    uid = odoo_login(session)
+    csrf = get_csrf_token(session)
+
+    wiz_id = wizard_create(session, uid)
+    wiz_id = wizard_save(session, uid, REPORT_TYPE, date_from, date_to)
+    report_info = press_report_button(session, uid, wiz_id)
+
+    rel_path, _options, _context = build_report_paths(report_info, date_from, date_to, uid, wiz_id)
+    out_name = f"{REPORT_TYPE}_{date_from}_to_{date_to}.xlsx".replace(":", "-")
+    out_path = os.path.join(BASE_DOWNLOAD_DIR, out_name)
+
+    log("⬇️  Attempting direct GET download...")
+    if try_direct_get_xlsx(session, rel_path, out_path):
+        log(f"✅ Downloaded via direct GET → {out_path}")
+        return out_path
+
+    log("↩️  Falling back to /report/download POST ...")
+    if try_report_download_post(session, csrf, rel_path, out_path):
+        log(f"✅ Downloaded via /report/download → {out_path}")
+        return out_path
+
+    raise RuntimeError("Download failed via both GET and POST.")
+
+# ===============================
+# Main
+# ===============================
+def main():
+    try:
+        log(f"Starting Odoo → Google Sheets run for {DATE_FROM} → {DATE_TO} [{REPORT_TYPE}] ...")
+        xlsx_path = download_from_odoo(DATE_FROM, DATE_TO)
+        update_google_sheet_with_file(xlsx_path, SHEET_NAME, PASTE_COLUMNS)
+        # Clean up the local file
+        if os.path.exists(xlsx_path):
+            os.remove(xlsx_path)
+        log("🎉 Done.Metal Sheet")
+    except Exception as e:
+        log("❌ Fatal error:")
+        traceback.print_exc()
         raise SystemExit(1)
 
 if __name__ == "__main__":
