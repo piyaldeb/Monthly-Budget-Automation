@@ -73,19 +73,19 @@ jobs:
           printf '%s' '${{ secrets.GOOGLE_SHEET_CRED_JSON }}' > "$GITHUB_WORKSPACE/credentials.json"
 
       # ---------- RUNNERS (conditional) ----------
-      - name: Run MT script
+      - name: Run MT_db script
         if: ${{ github.event_name != 'workflow_dispatch' && true || inputs.run_all == true || inputs.run_mt == true }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
         run: |
           xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Mt_db.py
 
-      - name: Run Zipper script
+      - name: Run Zipper_db script
         if: ${{ github.event_name != 'workflow_dispatch' && true || inputs.run_all == true || inputs.run_zip == true }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/credentials.json
         run: |
-          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Zip.py
+          xvfb-run --auto-servernum --server-args='-screen 0 1920x1080x24' python Zip_db.py
 
       - name: Run Zip_dash script
         if: ${{ github.event_name != 'workflow_dispatch' && true || inputs.run_all == true || inputs.run_zip_dash == true }}
