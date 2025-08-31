@@ -29,17 +29,19 @@ SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1f5pdh23Lxrxkdtm7vOeufxWXBvMR
 SHEET_NAME = os.environ.get("SHEET_NAME", "Zip")
 PASTE_COLUMNS = int(os.environ.get("PASTE_COLUMNS", "25"))
 
-# ========= GOOGLE SHEETS SERVICE ==========
+# -------------------------
+# GOOGLE SHEETS SERVICE (fixed)
+# -------------------------
 def get_google_sheets_service():
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    service = build("sheets", "v4", credentials=creds).spreadsheets().values()
-    return service
+    service = build("sheets", "v4", credentials=creds)
+    return service.spreadsheets()  # return the spreadsheets resource
 
 # -------------------------
-# Update Google Sheet
+# Update Google Sheet (fixed)
 # -------------------------
 def update_google_sheet_with_file(file_path, sheet_name):
     df = pd.read_excel(file_path, engine="openpyxl")
@@ -49,24 +51,29 @@ def update_google_sheet_with_file(file_path, sheet_name):
         df[col] = pd.to_numeric(df[col], errors="coerce").round(2)
     df = df.where(pd.notnull(df), "")
     
-    # Limit to first PASTE_COLUMNS
     df_to_paste = df.iloc[:, 0:PASTE_COLUMNS]
     values = [df_to_paste.columns.tolist()] + df_to_paste.values.tolist()
 
     service = get_google_sheets_service()
-    # Clear existing content
-    service.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A1:Z1000").execute()
+
+    # Clear existing content first
+    service.values().clear(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{sheet_name}!A1:Z1000"
+    ).execute()
+
     # Paste new values
-    service.update(
+    service.values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=f"{sheet_name}!A1",
         valueInputOption="USER_ENTERED",
         body={"values": values}
     ).execute()
-    
-    # Remove file after update
+
+    # Delete local file
     if os.path.exists(file_path):
         os.remove(file_path)
+
 
 # -------------------------
 # Download Odoo Report
