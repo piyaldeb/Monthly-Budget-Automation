@@ -244,7 +244,7 @@ def download_from_odoo(company="Zipper", date_from="01/01/2025"):
                 driver.execute_script("arguments[0].click();", export_btn)
 
             log(f"Download Excel click attempt {i}/3...")
-            f = wait_for_download_complete(run_dir, start_time=click_time, timeout=60 if i < 3 else 180)
+            f = wait_for_download_complete(run_dir, start_time=click_time, timeout= 180)
             if f:
                 return f
             time.sleep(2)
