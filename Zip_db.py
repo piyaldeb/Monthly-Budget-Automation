@@ -291,21 +291,29 @@ def download_from_odoo(date_from: str, date_to: str) -> str:
     raise RuntimeError("Download failed via both GET and POST.")
 
 # ===============================
-# Main
+# Main with retry
 # ===============================
 def main():
-    try:
-        log(f"Starting Odoo → Google Sheets run for {DATE_FROM} → {DATE_TO} [{REPORT_TYPE}] ...")
-        xlsx_path = download_from_odoo(DATE_FROM, DATE_TO)
-        update_google_sheet_with_file(xlsx_path, SHEET_NAME, PASTE_COLUMNS)
-        # Clean up the local file
-        if os.path.exists(xlsx_path):
-            os.remove(xlsx_path)
-        log("🎉 Done. Zipper")
-    except Exception as e:
-        log("❌ Fatal error:")
-        traceback.print_exc()
-        raise SystemExit(1)
+    MAX_RETRIES = 3
+    attempt = 0
+    while attempt < MAX_RETRIES:
+        attempt += 1
+        try:
+            log(f"Starting Odoo → Google Sheets run for {DATE_FROM} → {DATE_TO} [{REPORT_TYPE}] ... (Attempt {attempt})")
+            xlsx_path = download_from_odoo(DATE_FROM, DATE_TO)
+            update_google_sheet_with_file(xlsx_path, SHEET_NAME, PASTE_COLUMNS)
+            # Clean up the local file
+            if os.path.exists(xlsx_path):
+                os.remove(xlsx_path)
+            log("🎉 Done. Zipper")
+            break  # success, exit the loop
+        except Exception as e:
+            log(f"❌ Attempt {attempt} failed: {e}")
+            if attempt < MAX_RETRIES:
+                log("🔄 Retrying in 5 seconds...")
+                time.sleep(5)
+            else:
+                log("❌ All retry attempts failed. Exiting.")
+                traceback.print_exc()
+                raise SystemExit(1)
 
-if __name__ == "__main__":
-    main()
