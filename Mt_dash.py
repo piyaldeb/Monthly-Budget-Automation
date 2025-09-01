@@ -9,17 +9,18 @@ import requests
 import pandas as pd
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-
+from dotenv import load_dotenv
+# Load local .env file
+load_dotenv()
 # ===============================
 # Config (env first, fallback)
 # ===============================
 BASE_DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "downloads")
 os.makedirs(BASE_DOWNLOAD_DIR, exist_ok=True)
-
-ODOO_URL   = os.environ.get("ODOO_URL",   "https://taps.odoo.com").rstrip("/")
-DB         = os.environ.get("ODOO_DB",    "masbha-tex-taps-master-2093561")
-USERNAME   = os.environ.get("ODOO_USERNAME", "ranak@texzipperbd.com")
-PASSWORD   = os.environ.get("ODOO_PASSWORD", "2326")
+ODOO_URL   = os.getenv("ODOO_URL")
+DB         = os.getenv("ODOO_DB")
+USERNAME   = os.getenv("ODOO_USERNAME")
+PASSWORD   = os.getenv("ODOO_PASSWORD")
 
 # Wizard / report config
 MODEL                 = os.environ.get("ODOO_WIZARD_MODEL", "mrp.report.custom")

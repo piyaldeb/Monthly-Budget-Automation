@@ -17,9 +17,11 @@ from googleapiclient.discovery import build
 # Config
 # -------------------------
 BASE_DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "downloads")
-ODOO_URL = "https://taps.odoo.com"
-ODOO_USERNAME = os.environ.get("ODOO_USERNAME", "ranak@texzipperbd.com")
-ODOO_PASSWORD = os.environ.get("ODOO_PASSWORD", "2326")
+
+ODOO_URL   = os.getenv("ODOO_URL")
+DB         = os.getenv("ODOO_DB")
+USERNAME   = os.getenv("ODOO_USERNAME")
+PASSWORD   = os.getenv("ODOO_PASSWORD")
 
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I")

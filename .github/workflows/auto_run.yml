@@ -2,36 +2,31 @@ name: Daily Odoo Report Automation
 
 on:
   schedule:
-     # Runs every 30 minutes between 9:00 AM and 1:00 PM Asia/Dhaka (03:00–07:00 UTC)
+    # Runs every 30 minutes between 9:00 AM and 1:00 PM Asia/Dhaka (03:00–07:00 UTC)
     - cron: "0,30 3-6 * * *"
 
   workflow_dispatch:
     inputs:
       run_mt:
-        description: 'Run Mt.py'
+        description: 'Run Mt_db.py'
         type: boolean
         default: false
-        required: false
       run_zip:
-        description: 'Run Zip.py'
+        description: 'Run Zip_db.py'
         type: boolean
         default: false
-        required: false
       run_zip_dash:
         description: 'Run Zip_dash.py'
         type: boolean
         default: false
-        required: false
       run_mt_dash:
         description: 'Run Mt_dash.py'
         type: boolean
         default: false
-        required: false
       run_all:
         description: 'Run ALL scripts (overrides individual toggles)'
         type: boolean
         default: true
-        required: false
 
 concurrency:
   group: daily-odoo-${{ github.ref }}
@@ -40,6 +35,13 @@ concurrency:
 jobs:
   run-odoo-reports:
     runs-on: ubuntu-22.04
+
+    env:
+      # Inject Odoo credentials from GitHub Secrets
+      ODOO_URL: ${{ secrets.ODOO_URL }}
+      ODOO_DB: ${{ secrets.ODOO_DB }}
+      ODOO_USERNAME: ${{ secrets.ODOO_USERNAME }}
+      ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
 
     steps:
       - name: Checkout code
@@ -66,7 +68,7 @@ jobs:
             pandas numpy \
             gspread gspread-dataframe google-auth google-auth-httplib2 google-api-python-client \
             selenium chromedriver-autoinstaller \
-            openpyxl
+            openpyxl python-dotenv
 
       - name: Create Google credentials file
         run: |
