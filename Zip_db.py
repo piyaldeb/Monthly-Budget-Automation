@@ -229,7 +229,7 @@ def build_report_paths(report_info: dict, date_from: str, date_to: str, uid: int
 
 def try_direct_get_xlsx(session: requests.Session, relative_path: str, out_path: str) -> bool:
     url = f"{ODOO_URL}{relative_path}"
-    r = session.get(url, stream=True)
+    r = session.get(url, stream=True,timeout=200)
     if r.status_code == 200 and r.headers.get("content-type","").startswith(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     ):
@@ -316,7 +316,7 @@ def main():
             log(f"❌ Error on attempt {attempt}: {e}")
             traceback.print_exc()
             if attempt < max_retries:
-                wait_time = 5 * attempt
+                wait_time = 15 * attempt
                 log(f"⏳ Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
             else:
