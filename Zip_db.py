@@ -97,7 +97,7 @@ def odoo_login(session: requests.Session) -> int:
         "jsonrpc": "2.0",
         "params": {"db": DB, "login": USERNAME, "password": PASSWORD},
     }
-    r = session.post(url, json=payload)
+    r = session.post(url, json=payload, timeout=60)
     r.raise_for_status()
     uid = r.json().get("result", {}).get("uid")
     if not uid:
@@ -107,7 +107,7 @@ def odoo_login(session: requests.Session) -> int:
 
 def get_csrf_token(session: requests.Session) -> str:
     # Not always needed for GET download, but we fetch it for the POST fallback route
-    r = session.get(f"{ODOO_URL}/web")
+    r = session.get(f"{ODOO_URL}/web", timeout=60)
     r.raise_for_status()
     m = re.search(r'csrf_token:\s*"([A-Za-z0-9]+)"', r.text)
     token = m.group(1) if m else ""
@@ -126,7 +126,7 @@ def wizard_create(session: requests.Session, uid: int) -> int:
             "kwargs": {"context": {"uid": uid}},
         },
     }
-    r = session.post(url, json=payload)
+    r = session.post(url, json=payload, timeout=60)
     r.raise_for_status()
     wiz_id = r.json().get("result")
     if not wiz_id:
@@ -158,7 +158,7 @@ def wizard_save(session: requests.Session, uid: int, report_type: str, date_from
             },
         },
     }
-    r = session.post(url, json=payload)
+    r = session.post(url, json=payload, timeout=60)
     r.raise_for_status()
     result = r.json().get("result") or []
     wiz_id = result[0].get("id") if result and isinstance(result, list) else None
@@ -186,7 +186,7 @@ def press_report_button(session: requests.Session, uid: int, wiz_id: int) -> dic
             },
         },
     }
-    r = session.post(url, json=payload)
+    r = session.post(url, json=payload, timeout=60)
     r.raise_for_status()
     result = r.json().get("result") or {}
     # Expect an ir.actions.report dict
@@ -227,41 +227,71 @@ def build_report_paths(report_info: dict, date_from: str, date_to: str, uid: int
     rel = f"/report/xlsx/{report_name}?options={json.dumps(options)}&context={json.dumps(context)}"
     return rel, options, context
 
-def try_direct_get_xlsx(session: requests.Session, relative_path: str, out_path: str) -> bool:
-    url = f"{ODOO_URL}{relative_path}"
-    r = session.get(url, stream=True,timeout=200)
-    if r.status_code == 200 and r.headers.get("content-type","").startswith(
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    ):
-        with open(out_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        return True
-    log(f"Direct GET failed: {r.status_code} {r.headers.get('content-type','')}\n{r.text[:500]}")
-    return False
-
-def try_report_download_post(session: requests.Session, csrf_token: str, relative_path: str, out_path: str) -> bool:
+def try_direct_get_xlsx(session: requests.Session, relative_path: str, out_path: str, timeout: int = 300) -> bool:
     """
-    Fallback to /report/download with form-encoded fields, like the web client does.
+    Try to download via direct GET with increased timeout and progressive waiting.
+    """
+    url = f"{ODOO_URL}{relative_path}"
+    
+    # Try with longer timeout and stream=True for large files
+    try:
+        r = session.get(url, stream=True, timeout=timeout)
+        
+        if r.status_code == 200 and r.headers.get("content-type", "").startswith(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ):
+            with open(out_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            return True
+        
+        log(f"Direct GET failed: {r.status_code} {r.headers.get('content-type','')}")
+        if r.status_code == 502:
+            log(f"⚠️ 502 Bad Gateway - Server timeout generating report")
+        return False
+        
+    except requests.exceptions.Timeout:
+        log(f"⏱️ Request timed out after {timeout} seconds")
+        return False
+    except Exception as e:
+        log(f"❌ GET request error: {e}")
+        return False
+
+def try_report_download_post(session: requests.Session, csrf_token: str, relative_path: str, out_path: str, timeout: int = 300) -> bool:
+    """
+    Fallback to /report/download with form-encoded fields, with increased timeout.
     """
     url = f"{ODOO_URL}/report/download"
     data = {
         "data": json.dumps([relative_path, "xlsx"]),
-        "context": "{}",  # server doesn't strictly require here because it's in the URL already
-        "token": "filetoken-123",  # any string
+        "context": "{}",
+        "token": "filetoken-123",
         "csrf_token": csrf_token or "",
     }
     headers = {"Referer": f"{ODOO_URL}/web"}
-    r = session.post(url, data=data, headers=headers, timeout=120)
-    if r.status_code == 200 and r.headers.get("content-type","").startswith(
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    ):
-        with open(out_path, "wb") as f:
-            f.write(r.content)
-        return True
-    log(f"/report/download failed: {r.status_code}\nHeaders: {r.headers}\nBody: {r.text[:800]}")
-    return False
+    
+    try:
+        r = session.post(url, data=data, headers=headers, timeout=timeout)
+        
+        if r.status_code == 200 and r.headers.get("content-type", "").startswith(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ):
+            with open(out_path, "wb") as f:
+                f.write(r.content)
+            return True
+        
+        log(f"/report/download failed: {r.status_code}")
+        if r.status_code == 502:
+            log(f"⚠️ 502 Bad Gateway - Server timeout generating report")
+        return False
+        
+    except requests.exceptions.Timeout:
+        log(f"⏱️ POST request timed out after {timeout} seconds")
+        return False
+    except Exception as e:
+        log(f"❌ POST request error: {e}")
+        return False
 
 def download_from_odoo(date_from: str, date_to: str) -> str:
     """
@@ -277,21 +307,34 @@ def download_from_odoo(date_from: str, date_to: str) -> str:
     wiz_id = wizard_save(session, uid, REPORT_TYPE, date_from, date_to)
     report_info = press_report_button(session, uid, wiz_id)
 
+    # Give the server time to start generating the report
+    log("⏳ Waiting 10 seconds for server to prepare report...")
+    time.sleep(10)
+
     rel_path, _options, _context = build_report_paths(report_info, date_from, date_to, uid, wiz_id)
     out_name = f"{REPORT_TYPE}_{date_from}_to_{date_to}.xlsx".replace(":", "-")
     out_path = os.path.join(BASE_DOWNLOAD_DIR, out_name)
 
-    log("⬇️  Attempting direct GET download...")
-    if try_direct_get_xlsx(session, rel_path, out_path):
-        log(f"✅ Downloaded via direct GET → {out_path}")
-        return out_path
+    # Try with progressively longer timeouts
+    timeouts = [180, 300, 420]  # 3 min, 5 min, 7 min
+    
+    for attempt, timeout in enumerate(timeouts, 1):
+        log(f"⬇️  Attempt {attempt}/{len(timeouts)}: Direct GET download (timeout: {timeout}s)...")
+        if try_direct_get_xlsx(session, rel_path, out_path, timeout):
+            log(f"✅ Downloaded via direct GET → {out_path}")
+            return out_path
+        
+        if attempt < len(timeouts):
+            log(f"⏳ Waiting 15 seconds before next attempt...")
+            time.sleep(15)
 
-    log("↩️  Falling back to /report/download POST ...")
-    if try_report_download_post(session, csrf, rel_path, out_path):
+    # Final fallback to POST
+    log("↩️  Final attempt: /report/download POST (timeout: 420s)...")
+    if try_report_download_post(session, csrf, rel_path, out_path, 420):
         log(f"✅ Downloaded via /report/download → {out_path}")
         return out_path
 
-    raise RuntimeError("Download failed via both GET and POST.")
+    raise RuntimeError("Download failed: Server consistently returns 502 Bad Gateway. The report may be too large or complex for the server to generate within timeout limits.")
 
 # ===============================
 # Main with retry
@@ -316,11 +359,17 @@ def main():
             log(f"❌ Error on attempt {attempt}: {e}")
             traceback.print_exc()
             if attempt < max_retries:
-                wait_time = 15 * attempt
+                # Exponential backoff: 30s, 60s, 120s
+                wait_time = 30 * (2 ** (attempt - 1))
                 log(f"⏳ Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
             else:
-                log("🚨 All retry attempts failed. Exiting.")
+                log("🚨 All retry attempts failed.")
+                log("💡 Possible solutions:")
+                log("   1. Reduce the date range (split into smaller chunks)")
+                log("   2. Contact Odoo.sh support - server may need resource upgrade")
+                log("   3. Try running during off-peak hours")
+                log("   4. Check if report can be generated manually in Odoo UI")
                 raise SystemExit(1)
 
 
