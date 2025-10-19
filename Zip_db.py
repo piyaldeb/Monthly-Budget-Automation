@@ -32,9 +32,25 @@ COMPANY_ID            = int(os.environ.get("ODOO_COMPANY_ID", "1"))         # 3 
 TZ                    = os.environ.get("ODOO_TZ", "Asia/Dhaka")
 
 # Dates (YYYY-MM-DD for Odoo)
-DATE_FROM = os.environ.get("DATE_FROM", "2025-08-01")
-DATE_TO   = os.environ.get("DATE_TO",   datetime.now().strftime("%Y-%m-%d"))
+from datetime import datetime, timedelta
 
+# Calculate yesterday's date
+yesterday = datetime.now() - timedelta(days=1)
+
+# If yesterday is in a different month than today, use yesterday's month
+# Otherwise, use current month
+if yesterday.month != datetime.now().month:
+    # Yesterday was last day of previous month
+    DATE_FROM = yesterday.replace(day=1).strftime("%Y-%m-%d")
+    DATE_TO = yesterday.strftime("%Y-%m-%d")
+else:
+    # Yesterday is in current month
+    DATE_FROM = datetime.now().replace(day=1).strftime("%Y-%m-%d")
+    DATE_TO = yesterday.strftime("%Y-%m-%d")
+
+# You can still override with environment variables if needed
+DATE_FROM = os.environ.get("DATE_FROM", DATE_FROM)
+DATE_TO = os.environ.get("DATE_TO", DATE_TO)
 # Google Sheets
 SERVICE_ACCOUNT_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
 SPREADSHEET_ID       = os.environ.get("SPREADSHEET_ID", "1f5pdh23Lxrxkdtm7vOeufxWXBvMR8HYIlRcucBZ994I")
@@ -75,18 +91,64 @@ def update_google_sheet_with_file(file_path: str, sheet_name: str, paste_cols: i
     df = df.where(pd.notnull(df), "")
     df_to_paste = df.iloc[:, 0:paste_cols]
 
-    values = [df_to_paste.columns.tolist()] + df_to_paste.values.tolist()
     svc = get_google_sheets_service_values()
-    # Clear A:I (or A:whatever based on paste_cols)
-    last_col_letter = chr(ord('A') + paste_cols - 1)
-    svc.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:{last_col_letter}").execute()
-    svc.update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{sheet_name}!A1",
-        valueInputOption="USER_ENTERED",
-        body={"values": values}
-    ).execute()
-    log(f"✅ Google Sheet '{sheet_name}' updated with {len(values)-1} rows.")
+    
+    # Get existing data from sheet
+    try:
+        result = svc.get(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!A:Z"
+        ).execute()
+        existing_values = result.get('values', [])
+    except:
+        existing_values = []
+    
+    if len(existing_values) <= 1:
+        # Sheet is empty or only has headers - write with headers
+        values = [df_to_paste.columns.tolist()] + df_to_paste.values.tolist()
+        svc.update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!A1",
+            valueInputOption="USER_ENTERED",
+            body={"values": values}
+        ).execute()
+        log(f"✅ Google Sheet '{sheet_name}' initialized with {len(values)-1} rows.")
+    else:
+        # Sheet has data - merge with duplicate handling
+        # Convert existing data to DataFrame (skip header row)
+        headers = existing_values[0]
+        existing_df = pd.DataFrame(existing_values[1:], columns=headers)
+        
+        # Assume first column is the unique identifier (product/item name)
+        # Get new data without headers
+        new_df = df_to_paste.copy()
+        new_df.columns = df_to_paste.columns.tolist()
+        
+        # Identify the key column (usually first column - product/item name)
+        key_col = df_to_paste.columns[0]
+        
+        # Remove rows from existing_df that match keys in new_df
+        if key_col in existing_df.columns and len(existing_df) > 0:
+            new_keys = set(new_df[key_col].astype(str))
+            existing_df = existing_df[~existing_df[key_col].astype(str).isin(new_keys)]
+        
+        # Combine: existing (without duplicates) + new data
+        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+        
+        # Prepare final values with headers
+        values = [headers] + combined_df.values.tolist()
+        
+        # Clear and write all data
+        last_col_letter = chr(ord('A') + paste_cols - 1)
+        svc.clear(spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A:{last_col_letter}").execute()
+        svc.update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!A1",
+            valueInputOption="USER_ENTERED",
+            body={"values": values}
+        ).execute()
+        
+        log(f"✅ Google Sheet '{sheet_name}' updated: {len(new_df)} new/updated rows, {len(values)-1} total rows.")
 
 # ===============================
 # Odoo (requests) flow
