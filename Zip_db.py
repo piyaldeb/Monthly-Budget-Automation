@@ -401,39 +401,96 @@ def download_from_odoo(date_from: str, date_to: str) -> str:
 # ===============================
 # Main with retry
 # ===============================
+from datetime import datetime, timedelta
+
+def get_date_chunks(start_date_str: str, end_date_str: str, chunk_days: int = 7):
+    """Split date range into smaller chunks to avoid server timeout"""
+    start = datetime.strptime(start_date_str, "%Y-%m-%d")
+    end = datetime.strptime(end_date_str, "%Y-%m-%d")
+    
+    chunks = []
+    current = start
+    
+    while current <= end:
+        chunk_end = min(current + timedelta(days=chunk_days - 1), end)
+        chunks.append((
+            current.strftime("%Y-%m-%d"),
+            chunk_end.strftime("%Y-%m-%d")
+        ))
+        current = chunk_end + timedelta(days=1)
+    
+    return chunks
+
 def main():
     max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            log(f"▶️ Attempt {attempt}/{max_retries}: Odoo → Google Sheets run for {DATE_FROM} → {DATE_TO} [{REPORT_TYPE}] ...")
-            
-            xlsx_path = download_from_odoo(DATE_FROM, DATE_TO)
-            update_google_sheet_with_file(xlsx_path, SHEET_NAME, PASTE_COLUMNS)
-            
-            # Clean up the local file
-            if os.path.exists(xlsx_path):
-                os.remove(xlsx_path)
-
-            log("🎉 Done. Zipper")
-            return  # Exit if successful
-
-        except Exception as e:
-            log(f"❌ Error on attempt {attempt}: {e}")
-            traceback.print_exc()
-            if attempt < max_retries:
-                # Exponential backoff: 30s, 60s, 120s
-                wait_time = 30 * (2 ** (attempt - 1))
-                log(f"⏳ Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-            else:
-                log("🚨 All retry attempts failed.")
-                log("💡 Possible solutions:")
-                log("   1. Reduce the date range (split into smaller chunks)")
-                log("   2. Contact Odoo.sh support - server may need resource upgrade")
-                log("   3. Try running during off-peak hours")
-                log("   4. Check if report can be generated manually in Odoo UI")
-                raise SystemExit(1)
-
-
-if __name__ == "__main__":
-    main()
+    
+    # Split the date range into weekly chunks
+    date_chunks = get_date_chunks(DATE_FROM, DATE_TO, chunk_days=7)
+    log(f"📅 Split date range into {len(date_chunks)} chunks: {DATE_FROM} → {DATE_TO}")
+    
+    all_dataframes = []
+    
+    for chunk_idx, (chunk_from, chunk_to) in enumerate(date_chunks, 1):
+        log(f"\n{'='*60}")
+        log(f"📦 Processing chunk {chunk_idx}/{len(date_chunks)}: {chunk_from} → {chunk_to}")
+        log(f"{'='*60}")
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                log(f"▶️ Attempt {attempt}/{max_retries} for chunk {chunk_idx}...")
+                
+                xlsx_path = download_from_odoo(chunk_from, chunk_to)
+                
+                # Read the Excel file into DataFrame
+                df = pd.read_excel(xlsx_path, engine="openpyxl")
+                all_dataframes.append(df)
+                
+                # Clean up the chunk file
+                if os.path.exists(xlsx_path):
+                    os.remove(xlsx_path)
+                
+                log(f"✅ Chunk {chunk_idx} completed ({len(df)} rows)")
+                break  # Success, move to next chunk
+                
+            except Exception as e:
+                log(f"❌ Error on attempt {attempt} for chunk {chunk_idx}: {e}")
+                if attempt < max_retries:
+                    wait_time = 30 * (2 ** (attempt - 1))
+                    log(f"⏳ Retrying chunk {chunk_idx} in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    log(f"🚨 Chunk {chunk_idx} failed after {max_retries} attempts")
+                    raise SystemExit(1)
+    
+    # Combine all chunks into one DataFrame
+    if not all_dataframes:
+        log("❌ No data collected from any chunks")
+        raise SystemExit(1)
+    
+    log(f"\n{'='*60}")
+    log(f"📊 Combining {len(all_dataframes)} chunks...")
+    combined_df = pd.concat(all_dataframes, ignore_index=True)
+    
+    # Remove duplicates if any (based on first column)
+    first_col = combined_df.columns[0]
+    before_dedup = len(combined_df)
+    combined_df = combined_df.drop_duplicates(subset=[first_col], keep='last')
+    after_dedup = len(combined_df)
+    
+    if before_dedup > after_dedup:
+        log(f"🔄 Removed {before_dedup - after_dedup} duplicate rows")
+    
+    # Save combined data temporarily
+    temp_file = os.path.join(BASE_DOWNLOAD_DIR, f"combined_{DATE_FROM}_to_{DATE_TO}.xlsx")
+    combined_df.to_excel(temp_file, index=False, engine="openpyxl")
+    log(f"💾 Combined file saved: {temp_file} ({len(combined_df)} rows)")
+    
+    # Upload to Google Sheets
+    log(f"☁️ Uploading to Google Sheets...")
+    update_google_sheet_with_file(temp_file, SHEET_NAME, PASTE_COLUMNS)
+    
+    # Clean up combined file
+    if os.path.exists(temp_file):
+        os.remove(temp_file)
+    
+    log("🎉 Done. Zipper")
